@@ -115,7 +115,7 @@ function showFormationPicker(slotIdx) {
   const inFormCount = getFormationCount();
 
   if (available.length === 0) { showToast('没有可上阵的宠物', 'info'); return; }
-  if (inFormCount >= 3) { showToast('最多上阵3只宠物', 'info'); return; }
+  if (inFormCount >= 6) { showToast('阵型已满', 'info'); return; }
 
   let html = '<p>选择宠物上阵到' + (slotIdx < 3 ? '前排' : '后排') + ':</p>';
   available.forEach(pet => {

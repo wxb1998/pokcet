@@ -24,7 +24,7 @@ export function spawnEnemies() {
     const lv = randInt(zone.lvRange[0], zone.lvRange[1]);
     const isBoss = Math.random() < 0.05;
     const bossMult = isBoss ? 1.8 : 1.0;
-    const capturable = !isBoss && Math.random() < 0.15;
+    const capturable = !isBoss && Math.random() < 0.35;
     const hp = Math.floor((sp.baseStats.hp + randInt(5,20)) * (1 + (lv-1)*0.06) * 5 * bossMult);
 
     enemies.push({
@@ -143,12 +143,13 @@ function executeSkill(unit, skillSlot) {
   if (!skillData) return;
 
   // 自身增益/回复
+  const sidePrefix = unit.isEnemy ? '【敌】' : '【我】';
   if (skillData.type === 'self') {
-    if (skillData.effect === 'defUp') { unit.buffDef = 3; addLog(unit.name + ' 使用 ' + skillData.name + '，防御提升!', 'log-skill'); }
-    else if (skillData.effect === 'defUp2') { unit.buffDef = 4; addLog(unit.name + ' 使用 ' + skillData.name + '，防御大幅提升!', 'log-skill'); }
-    else if (skillData.effect === 'heal25') { const h = Math.floor(unit.maxHp * 0.25); unit.currentHp = Math.min(unit.maxHp, unit.currentHp + h); addLog(unit.name + ' 使用 ' + skillData.name + '，回复 ' + h + ' HP!', 'log-heal'); }
-    else if (skillData.effect === 'heal40') { const h = Math.floor(unit.maxHp * 0.4); unit.currentHp = Math.min(unit.maxHp, unit.currentHp + h); addLog(unit.name + ' 使用 ' + skillData.name + '，回复 ' + h + ' HP!', 'log-heal'); }
-    else if (skillData.effect === 'regen') { unit.regen = 4; addLog(unit.name + ' 使用 ' + skillData.name + '，持续回复中!', 'log-heal'); }
+    if (skillData.effect === 'defUp') { unit.buffDef = 3; addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，防御提升!', 'log-skill'); }
+    else if (skillData.effect === 'defUp2') { unit.buffDef = 4; addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，防御大幅提升!', 'log-skill'); }
+    else if (skillData.effect === 'heal25') { const h = Math.floor(unit.maxHp * 0.25); unit.currentHp = Math.min(unit.maxHp, unit.currentHp + h); addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，回复 ' + h + ' HP!', 'log-heal'); }
+    else if (skillData.effect === 'heal40') { const h = Math.floor(unit.maxHp * 0.4); unit.currentHp = Math.min(unit.maxHp, unit.currentHp + h); addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，回复 ' + h + ' HP!', 'log-heal'); }
+    else if (skillData.effect === 'regen') { unit.regen = 4; addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，持续回复中!', 'log-heal'); }
     skillSlot.cooldownLeft = skillData.cooldown;
     return;
   }
@@ -160,7 +161,7 @@ function executeSkill(unit, skillSlot) {
         const h = Math.floor(a.pet.maxHp * 0.3);
         a.pet.currentHp = Math.min(a.pet.maxHp, a.pet.currentHp + h);
       });
-      addLog(unit.name + ' 使用 ' + skillData.name + '，全队回复HP!', 'log-heal');
+      addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，全队回复HP!', 'log-heal');
     }
     skillSlot.cooldownLeft = skillData.cooldown;
     return;
@@ -175,7 +176,9 @@ function executeSkill(unit, skillSlot) {
     target.currentHp = Math.max(0, target.currentHp - result.damage);
     const critText = result.isCrit ? ' 暴击!' : '';
     const elemText = result.elemMult > 1 ? ' 效果拔群!' : (result.elemMult < 1 ? ' 效果不佳...' : '');
-    addLog(unit.name + ' 使用 ' + skillData.name + ' 对 ' + (target.displayName || target.name) + ' 造成 ' + result.damage + ' 伤害' + critText + elemText, 'log-dmg');
+    const logCls = unit.isEnemy ? 'log-enemy-dmg' : 'log-ally-dmg';
+    const prefix = unit.isEnemy ? '【敌】' : '【我】';
+    addLog(prefix + unit.name + ' 使用 ' + skillData.name + ' 对 ' + (target.displayName || target.name) + ' 造成 ' + result.damage + ' 伤害' + critText + elemText, logCls);
 
     // 宝物被动: 吸血
     if (!unit.isEnemy && unit.treasure && unit.treasure.passive === 'lifesteal') {
@@ -191,7 +194,7 @@ function executeSkill(unit, skillSlot) {
     if (!unit.isEnemy && unit.treasure && unit.treasure.passive === 'doubleStrike' && Math.random() < 0.08) {
       const r2 = calcDamage(unit, target, skillData);
       target.currentHp = Math.max(0, target.currentHp - r2.damage);
-      addLog(unit.name + ' 触发连击! 额外造成 ' + r2.damage + ' 伤害', 'log-dmg');
+      addLog('【我】' + unit.name + ' 触发连击! 额外造成 ' + r2.damage + ' 伤害', 'log-ally-dmg');
     }
   });
   skillSlot.cooldownLeft = skillData.cooldown;
@@ -213,7 +216,7 @@ function unitTakeTurn(unit) {
     const target = targets[0];
     const result = calcDamage(unit, target, { power: 50, elem: unit.elem, enhanceLevel: 0 });
     target.currentHp = Math.max(0, target.currentHp - result.damage);
-    addLog((unit.displayName || unit.name) + ' 攻击 ' + target.name + ' 造成 ' + result.damage + ' 伤害', 'log-dmg');
+    addLog('【敌】' + (unit.displayName || unit.name) + ' 攻击 ' + target.name + ' 造成 ' + result.damage + ' 伤害', 'log-enemy-dmg');
     if (target.treasure && target.treasure.passive === 'thorns') {
       const th = Math.floor(result.damage * 0.1);
       unit.currentHp = Math.max(0, unit.currentHp - th);
@@ -232,7 +235,7 @@ function unitTakeTurn(unit) {
     const target = targets[0];
     const result = calcDamage(unit, target, { power: 45, elem: unit.elem, enhanceLevel: 0 });
     target.currentHp = Math.max(0, target.currentHp - result.damage);
-    addLog(unit.name + ' 普通攻击 ' + (target.displayName || target.name) + ' 造成 ' + result.damage + ' 伤害', 'log-dmg');
+    addLog('【我】' + unit.name + ' 普通攻击 ' + (target.displayName || target.name) + ' 造成 ' + result.damage + ' 伤害', 'log-ally-dmg');
   }
   unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
 }

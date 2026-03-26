@@ -43,6 +43,8 @@ body { font-family: 'Microsoft YaHei','PingFang SC',sans-serif; background:#1a1a
 #battle-log { margin-top:8px; background:rgba(0,0,0,0.3); border-radius:8px; padding:8px; max-height:150px; overflow-y:auto; font-size:11px; line-height:1.6; }
 #battle-log .log-line { color:#999; }
 #battle-log .log-dmg { color:#f44336; }
+#battle-log .log-ally-dmg { color:#64b5f6; }
+#battle-log .log-enemy-dmg { color:#ef5350; }
 #battle-log .log-heal { color:#4caf50; }
 #battle-log .log-skill { color:#ff9800; }
 #battle-log .log-capture { color:#e94560; }
