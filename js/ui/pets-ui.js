@@ -2,8 +2,7 @@
 import { SPECIES, SKILLS, ELEM_CHART, PERSONALITIES, QUALITY_NAMES, TALENTS, GRADE_COLORS, GRADE_NAMES } from '../constants/index.js';
 import { gameState } from '../state.js';
 import { showModal, closeModal, showToast } from '../utils.js';
-import { expForLevel, calcAllStats, getAptFromIV } from '../systems/pet.js';
-import { enhanceSkill } from '../systems/comprehend.js';
+import { expForLevel, calcAllStats, getAptFromIV, equipSkill, unequipSkill, swapSkillSlots, syncBattleSkills } from '../systems/pet.js';
 import { equipTreasure } from '../systems/treasure.js';
 import { randInt } from '../utils.js';
 import { renderHeader } from './header-ui.js';
@@ -14,13 +13,54 @@ let _petBatchMode = false;
 let _petBatchSelected = new Set();
 
 // 暴露到 window 供 onclick 调用
-window._enhanceSkill = function(petId, skillIdx) {
+
+// 装备技能：bookIdx→slotIdx，slotIdx=-1表示自动
+window._equipSkillToSlot = function(petId, bookIdx, slotIdx) {
   const pet = gameState.pets.find(p => p.id === petId);
   if (!pet) return;
-  if (enhanceSkill(pet, skillIdx)) {
+  if (equipSkill(pet, bookIdx, slotIdx)) {
     closeModal();
     showPetDetail(pet);
+  } else {
+    showToast('装备失败（槽位已满或已装备）', 'info');
   }
+};
+
+// 卸下技能
+window._unequipSkillSlot = function(petId, slotIdx) {
+  const pet = gameState.pets.find(p => p.id === petId);
+  if (!pet) return;
+  unequipSkill(pet, slotIdx);
+  closeModal();
+  showPetDetail(pet);
+};
+
+// 交换优先级（上移）
+window._moveSkillUp = function(petId, slotIdx) {
+  const pet = gameState.pets.find(p => p.id === petId);
+  if (!pet || slotIdx <= 0) return;
+  swapSkillSlots(pet, slotIdx, slotIdx - 1);
+  closeModal();
+  showPetDetail(pet);
+};
+
+// 交换优先级（下移）
+window._moveSkillDown = function(petId, slotIdx) {
+  const pet = gameState.pets.find(p => p.id === petId);
+  if (!pet || slotIdx >= 3) return;
+  swapSkillSlots(pet, slotIdx, slotIdx + 1);
+  closeModal();
+  showPetDetail(pet);
+};
+
+// 替换已满槽位：先卸下slotIdx，再装备bookIdx到该槽
+window._replaceSkillSlot = function(petId, slotIdx, bookIdx) {
+  const pet = gameState.pets.find(p => p.id === petId);
+  if (!pet) return;
+  unequipSkill(pet, slotIdx);
+  equipSkill(pet, bookIdx, slotIdx);
+  closeModal();
+  showPetDetail(pet);
 };
 
 window._equipTreasure = function(trId, petId) {
@@ -149,8 +189,8 @@ export function renderPets() {
     });
     if (pet.skills.length === 0) skillsHTML = '<span style="font-size:10px;color:#555;">未习得技能</span>';
 
-    const compMax = Math.floor(pet.level / 3);
-    const compText = '领悟: ' + pet.comprehensionCount + '/' + compMax;
+    const bookCount = pet.skillBook ? pet.skillBook.length : 0;
+    const compText = '技能书: ' + bookCount + '个';
 
     const icon = sp.icon || '';
     card.innerHTML = (_petBatchMode ? '<input type="checkbox" ' + (_petBatchSelected.has(pet.id) ? 'checked' : '') + ' style="float:left;margin:4px 8px 0 0;pointer-events:none;">' : '')
@@ -219,33 +259,85 @@ function showPetDetail(pet) {
 
   html += '</div>';
 
-  // 技能区
-  // 技能书（所有已领悟技能）
-  html += '<h4 style="color:#e94560;">装备技能 (' + pet.skills.length + '/4)</h4>';
-  pet.skills.forEach((s, idx) => {
-    const sd = SKILLS[s.skillId];
-    if (!sd) return;
-    const gc = GRADE_COLORS[sd.grade] || '#ccc';
-    const gn = GRADE_NAMES[sd.grade] || '';
-    html += '<div style="padding:6px;margin:4px 0;background:rgba(255,255,255,0.05);border-radius:4px;">';
-    html += '<strong style="color:' + gc + ';">' + sd.name + '</strong> <span style="color:' + gc + ';">[' + gn + ']</span> Lv.' + (s.enhanceLevel + 1);
-    html += ' | 威力:' + (sd.power || '-') + ' | CD:' + sd.cooldown + ' | ' + sd.desc;
-    html += '</div>';
-  });
-  // 技能书总览
+  // ===== 技能管理区 =====
+  const typeMap = { single:'单体', aoe:'群攻', self:'自身', ally_single:'单体队友', ally_all:'全体队友', link:'联动' };
+  const equippedCount = pet.equippedSkills.filter(v => v != null).length;
+
+  // --- 装备槽（4格，显示优先级序号 + 上下箭头 + 卸下按钮）---
+  html += '<h4 style="color:#e94560;">装备槽 (' + equippedCount + '/4) <span style="font-size:11px;color:#888;font-weight:normal;">① 优先释放</span></h4>';
+  for (let slot = 0; slot < 4; slot++) {
+    const bookIdx = pet.equippedSkills[slot];
+    const slotLabel = '❶❷❸❹'[slot];
+    if (bookIdx != null && pet.skillBook[bookIdx]) {
+      const entry = pet.skillBook[bookIdx];
+      const sd = SKILLS[entry.skillId];
+      if (!sd) continue;
+      const gc = GRADE_COLORS[sd.grade] || '#ccc';
+      const gn = GRADE_NAMES[sd.grade] || '';
+      html += '<div style="padding:6px;margin:3px 0;background:rgba(255,255,255,0.07);border-radius:4px;border-left:4px solid ' + gc + ';display:flex;align-items:center;gap:6px;">';
+      // 优先级序号
+      html += '<span style="font-size:16px;min-width:20px;">' + slotLabel + '</span>';
+      // 技能信息
+      html += '<div style="flex:1;">';
+      html += '<strong style="color:' + gc + ';">' + sd.name + '</strong> <span style="color:' + gc + ';font-size:11px;">[' + gn + ']</span> Lv.' + entry.level;
+      html += ' <span style="color:#888;font-size:11px;">威力:' + (sd.power || '-') + ' CD:' + sd.cooldown + ' ' + (typeMap[sd.type] || '') + '</span>';
+      html += '</div>';
+      // 操作按钮
+      html += '<div style="display:flex;gap:3px;flex-shrink:0;">';
+      if (slot > 0) html += '<button class="btn-sm" onclick="window._moveSkillUp(' + pet.id + ',' + slot + ')" title="上移优先级">↑</button>';
+      if (slot < 3 && pet.equippedSkills[slot + 1] != null) html += '<button class="btn-sm" onclick="window._moveSkillDown(' + pet.id + ',' + slot + ')" title="下移优先级">↓</button>';
+      html += '<button class="btn-sm" style="background:#e53935;color:#fff;" onclick="window._unequipSkillSlot(' + pet.id + ',' + slot + ')">卸下</button>';
+      html += '</div></div>';
+    } else {
+      html += '<div style="padding:6px;margin:3px 0;background:rgba(255,255,255,0.02);border-radius:4px;border:1px dashed #444;color:#555;display:flex;align-items:center;gap:6px;">';
+      html += '<span style="font-size:16px;min-width:20px;">' + slotLabel + '</span>';
+      html += '<span>空槽位</span>';
+      html += '</div>';
+    }
+  }
+
+  // --- 技能书（所有已领悟技能列表，可装备/替换）---
   if (pet.skillBook && pet.skillBook.length > 0) {
-    html += '<h4 style="color:#42a5f5;margin-top:8px;">技能书 (' + pet.skillBook.length + '个已领悟)</h4>';
+    html += '<h4 style="color:#42a5f5;margin-top:10px;">技能书 (' + pet.skillBook.length + '个已领悟)</h4>';
     pet.skillBook.forEach((entry, idx) => {
       const sd = SKILLS[entry.skillId];
       if (!sd) return;
       const gc = GRADE_COLORS[sd.grade] || '#ccc';
       const gn = GRADE_NAMES[sd.grade] || '';
-      const equipped = pet.equippedSkills.indexOf(idx) >= 0;
-      html += '<div style="padding:4px 6px;margin:2px 0;background:rgba(255,255,255,' + (equipped ? '0.08' : '0.02') + ');border-radius:4px;border-left:3px solid ' + gc + ';">';
-      html += '<span style="color:' + gc + ';">' + sd.name + ' [' + gn + ']</span> Lv.' + entry.level;
-      html += equipped ? ' <span style="color:#4caf50;">✓ 已装备</span>' : ' <span style="color:#666;">未装备</span>';
+      const equippedSlot = pet.equippedSkills.indexOf(idx);
+      const isEquipped = equippedSlot >= 0;
+      const hasEmpty = pet.equippedSkills.indexOf(null) >= 0;
+
+      html += '<div style="padding:5px 6px;margin:2px 0;background:rgba(255,255,255,' + (isEquipped ? '0.07' : '0.02') + ');border-radius:4px;border-left:3px solid ' + gc + ';display:flex;align-items:center;gap:6px;">';
+      // 技能信息
+      html += '<div style="flex:1;">';
+      html += '<span style="color:' + gc + ';font-weight:bold;">' + sd.name + '</span> <span style="color:' + gc + ';font-size:10px;">[' + gn + ']</span> Lv.' + entry.level;
+      html += ' <span style="color:#888;font-size:10px;">威力:' + (sd.power || '-') + ' CD:' + sd.cooldown + ' ' + (typeMap[sd.type] || '') + '</span>';
+      if (sd.desc) html += '<div style="color:#777;font-size:10px;margin-top:1px;">' + sd.desc + '</div>';
       html += '</div>';
+      // 操作
+      html += '<div style="flex-shrink:0;">';
+      if (isEquipped) {
+        html += '<span style="color:#4caf50;font-size:11px;">✓ 槽位' + (equippedSlot + 1) + '</span>';
+      } else if (hasEmpty) {
+        html += '<button class="btn-sm" style="background:#1976d2;color:#fff;" onclick="window._equipSkillToSlot(' + pet.id + ',' + idx + ',-1)">装备</button>';
+      } else {
+        // 所有槽位已满，显示替换下拉
+        html += '<select style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px;" onchange="if(this.value>=0)window._replaceSkillSlot(' + pet.id + ',parseInt(this.value),' + idx + ')">';
+        html += '<option value="-1">替换...</option>';
+        for (let s = 0; s < 4; s++) {
+          const bi = pet.equippedSkills[s];
+          if (bi != null && pet.skillBook[bi]) {
+            const ssd = SKILLS[pet.skillBook[bi].skillId];
+            html += '<option value="' + s + '">替换 ' + (s+1) + '号: ' + (ssd ? ssd.name : '???') + '</option>';
+          }
+        }
+        html += '</select>';
+      }
+      html += '</div></div>';
     });
+  } else {
+    html += '<p style="color:#666;font-size:12px;margin-top:8px;">尚未领悟任何技能（升级时有50%概率领悟）</p>';
   }
 
   // 天赋果重随

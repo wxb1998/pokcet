@@ -503,7 +503,131 @@ function executeSkill(unit, skillSlot) {
     return;
   }
 
-  // 伤害技能
+  // === 联动技 ===
+  if (skillData.type === 'link') {
+    // 检查是否满足联动条件（同元素宠物数量 >= linkMin）
+    const linkElem = skillData.linkElem;
+    const linkMin = skillData.linkMin || 2;
+    const sameElemAllies = unit.isEnemy
+      ? gameState.enemies.filter(e => e.currentHp > 0 && e.elem === linkElem)
+      : getFormationPets().filter(fp => fp.pet.elem === linkElem).map(fp => fp.pet);
+
+    if (sameElemAllies.length < linkMin) {
+      // 不满足条件，跳过（改用普攻）
+      addLog(sidePrefix + unit.name + ' 尝试发动 ' + skillData.name + '，但同元素宠物不足!', 'log-skill');
+      skillSlot.cooldownLeft = 2; // 短CD惩罚
+      return;
+    }
+
+    addLog(sidePrefix + '【联动技】' + skillData.name + ' 发动!', 'log-skill');
+
+    // 1. 同元素所有宠物各攻击一次
+    const enemyTargets = unit.isEnemy
+      ? gameState.formation.filter(p => p && p.currentHp > 0)
+      : gameState.enemies.filter(e => e.currentHp > 0);
+
+    if (enemyTargets.length > 0 && skillData.power > 0) {
+      sameElemAllies.forEach(ally => {
+        if (ally.currentHp <= 0) return;
+        const target = enemyTargets[Math.floor(Math.random() * enemyTargets.length)];
+        if (!target || target.currentHp <= 0) return;
+        const linkFlags = skillData.linkFlags || {};
+
+        const result = calcDamage(ally, target, { ...skillData, enhanceLevel: skillSlot.enhanceLevel || 0 });
+        let dmg = result.damage;
+
+        // 护盾吸收
+        if (target.statusEffects) {
+          const shield = target.statusEffects.find(s => s.type === 'shield');
+          if (shield && shield.value > 0) {
+            const absorbed = Math.min(shield.value, dmg);
+            shield.value -= absorbed;
+            dmg -= absorbed;
+            if (shield.value <= 0) target.statusEffects = target.statusEffects.filter(s => s.type !== 'shield');
+          }
+        }
+        target.currentHp = Math.max(0, target.currentHp - dmg);
+        addLog(sidePrefix + (ally.displayName || ally.name) + ' 联动攻击 ' + (target.displayName || target.name) + ' ' + dmg + ' 伤害', unit.isEnemy ? 'log-enemy-dmg' : 'log-ally-dmg');
+
+        // 攻击动画
+        if (gameState._battleActions) {
+          const atkId = ally.isEnemy ? 'e' + gameState.enemies.indexOf(ally) : 'a' + gameState.formation.indexOf(ally);
+          const tgtId = target.isEnemy ? 'e' + gameState.enemies.indexOf(target) : 'a' + gameState.formation.indexOf(target);
+          gameState._battleActions.push({ attackerId: atkId, targetId: tgtId });
+        }
+      });
+    }
+
+    // 2. 对全体敌方施加状态效果
+    if (eff) {
+      enemyTargets.forEach(target => {
+        if (target.currentHp > 0) tryApplyStatus(unit, target, eff);
+      });
+    }
+
+    // 3. 联动治疗（link_water, link_holy, link_grass等）
+    if (skillData.linkHeal) {
+      const allies = unit.isEnemy
+        ? gameState.enemies.filter(e => e.currentHp > 0)
+        : getFormationPets().map(fp => fp.pet);
+      if (skillData.linkHeal.type === 'regen') {
+        // 全队持续回复
+        allies.forEach(a => {
+          if (!a.statusEffects) a.statusEffects = [];
+          a.statusEffects.push({ type: 'regen', turnsLeft: skillData.linkHeal.duration || 3, value: 0 });
+        });
+        addLog(sidePrefix + '全队获得持续回复!', 'log-heal');
+      } else {
+        const h = calcHealAmount(unit, skillData.linkHeal);
+        allies.forEach(a => { a.currentHp = Math.min(a.maxHp, a.currentHp + h); });
+        addLog(sidePrefix + '全队回复 ' + h + ' HP!', 'log-heal');
+      }
+    }
+
+    // 4. 联动buff（link_flying: 增攻+增速+闪避）
+    if (skillData.linkBuff) {
+      const allies = unit.isEnemy
+        ? gameState.enemies.filter(e => e.currentHp > 0)
+        : getFormationPets().map(fp => fp.pet);
+      const lb = skillData.linkBuff;
+      allies.forEach(a => {
+        if (!a.statusEffects) a.statusEffects = [];
+        if (lb.speedUp) a.statusEffects.push({ type: 'speedUp', turnsLeft: lb.speedUpDuration || 2, value: 0.30 });
+        if (lb.evasion) a.statusEffects.push({ type: 'evasion', turnsLeft: lb.evasionDuration || 2, value: lb.evasion });
+      });
+    }
+
+    // 5. 特殊：cleanse_and_shield（link_holy）
+    if (eff && eff.type === 'cleanse_and_shield') {
+      const allies = unit.isEnemy
+        ? gameState.enemies.filter(e => e.currentHp > 0)
+        : getFormationPets().map(fp => fp.pet);
+      // 驱散全负面
+      allies.forEach(a => {
+        if (a.statusEffects) a.statusEffects = a.statusEffects.filter(s => { const m = STATUS_EFFECTS[s.type]; return !(m && m.isDebuff); });
+      });
+      // 全队护盾
+      const shieldAmt = calcShieldAmount(unit, { defRatio: eff.shieldDefRatio || 1.5, hpRatio: eff.shieldHpRatio || 0.04 });
+      allies.forEach(a => {
+        if (!a.statusEffects) a.statusEffects = [];
+        a.statusEffects.push({ type: 'shield', turnsLeft: 3, value: shieldAmt });
+      });
+      addLog(sidePrefix + '驱散全负面 + 全队护盾 ' + shieldAmt + '!', 'log-skill');
+    }
+
+    // 6. 联动技buff给全队（link_normal: 全队增防）
+    if (eff && (eff.type === 'defUp' || eff.type === 'atkUp') && eff.baseChance >= 1.0) {
+      const allies = unit.isEnemy
+        ? gameState.enemies.filter(e => e.currentHp > 0)
+        : getFormationPets().map(fp => fp.pet);
+      allies.forEach(a => applyBuff(unit, a, eff));
+    }
+
+    skillSlot.cooldownLeft = skillData.cooldown;
+    return;
+  }
+
+  // 伤害技能（single / aoe）
   const targets = pickTarget(unit, skillData.type);
   if (!targets || targets.length === 0) return;
 

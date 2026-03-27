@@ -285,3 +285,56 @@ export function migratePetSkills(pet) {
 
   syncBattleSkills(pet);
 }
+
+// ===== 技能装备操作 =====
+
+/**
+ * 装备技能到指定槽位
+ * @param {object} pet
+ * @param {number} bookIdx - skillBook中的索引
+ * @param {number} slotIdx - 装备槽位(0-3)，-1表示自动找空槽
+ * @returns {boolean} 是否成功
+ */
+export function equipSkill(pet, bookIdx, slotIdx) {
+  if (!pet.skillBook || bookIdx < 0 || bookIdx >= pet.skillBook.length) return false;
+
+  // 检查是否已经装备在某个槽位
+  const alreadyAt = pet.equippedSkills.indexOf(bookIdx);
+  if (alreadyAt >= 0) return false; // 已装备
+
+  if (slotIdx === -1) {
+    // 自动找第一个空槽
+    slotIdx = pet.equippedSkills.indexOf(null);
+    if (slotIdx === -1) return false; // 没有空槽
+  }
+
+  if (slotIdx < 0 || slotIdx > 3) return false;
+  pet.equippedSkills[slotIdx] = bookIdx;
+  syncBattleSkills(pet);
+  return true;
+}
+
+/**
+ * 卸下指定槽位的技能
+ * @param {object} pet
+ * @param {number} slotIdx - 装备槽位(0-3)
+ */
+export function unequipSkill(pet, slotIdx) {
+  if (slotIdx < 0 || slotIdx > 3) return;
+  pet.equippedSkills[slotIdx] = null;
+  syncBattleSkills(pet);
+}
+
+/**
+ * 交换两个槽位的技能（调整优先级）
+ * @param {object} pet
+ * @param {number} slotA
+ * @param {number} slotB
+ */
+export function swapSkillSlots(pet, slotA, slotB) {
+  if (slotA < 0 || slotA > 3 || slotB < 0 || slotB > 3) return;
+  const tmp = pet.equippedSkills[slotA];
+  pet.equippedSkills[slotA] = pet.equippedSkills[slotB];
+  pet.equippedSkills[slotB] = tmp;
+  syncBattleSkills(pet);
+}
