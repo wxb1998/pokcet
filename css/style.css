@@ -499,3 +499,30 @@ body { font-family: 'Microsoft YaHei','PingFang SC',sans-serif; background:#1a1a
 .map-locked-info {
   text-align:center; color:#666; font-size:13px; padding:16px 0;
 }
+
+/* ===== Garden Tabs + Decompose ===== */
+.garden-tab-bar { display:flex; gap:4px; margin-bottom:8px; }
+.garden-tab-btn {
+  flex:1; padding:8px 4px; background:rgba(255,255,255,0.05); border:none; color:#aaa;
+  font-size:13px; border-radius:8px; cursor:pointer; transition:all 0.2s;
+}
+.garden-tab-btn.active { background:rgba(233,69,96,0.15); color:#e94560; font-weight:bold; }
+
+.decomp-list { display:flex; flex-direction:column; gap:4px; margin-top:8px; max-height:400px; overflow-y:auto; }
+.decomp-item {
+  display:flex; justify-content:space-between; align-items:center; padding:8px 10px;
+  background:rgba(255,255,255,0.04); border-radius:6px; cursor:pointer; transition:all 0.15s;
+}
+.decomp-item:hover { background:rgba(255,255,255,0.08); }
+.decomp-item.selected { background:rgba(233,69,96,0.12); border:1px solid rgba(233,69,96,0.3); }
+.decomp-item-left { display:flex; align-items:center; gap:8px; flex:1; min-width:0; }
+.decomp-check { font-size:16px; color:#888; min-width:20px; }
+.decomp-item.selected .decomp-check { color:#e94560; }
+.decomp-name { font-size:13px; font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.decomp-apt { font-size:11px; color:#888; white-space:nowrap; }
+.decomp-gold { font-size:12px; color:#ffd700; font-weight:bold; white-space:nowrap; margin-left:8px; }
+
+.decomp-bottom-bar {
+  display:flex; justify-content:space-between; align-items:center; padding:10px 12px;
+  background:rgba(233,69,96,0.1); border-radius:8px; margin-top:10px; font-size:13px; color:#ddd;
+}

@@ -1,5 +1,5 @@
 // Service Worker - 离线缓存支持
-const CACHE_NAME = 'shanhaijing-v20';
+const CACHE_NAME = 'shanhaijing-v21';
 
 const ASSETS = [
   './',
