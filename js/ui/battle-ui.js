@@ -1,4 +1,4 @@
-// 战斗界面渲染 - 左右对阵 + 阵型(前排/后排) + 像素精灵 + 动画
+// 战斗界面渲染 - 左右对阵 + 阵型(前排/后排) + 像素精灵 + 伤害动画
 import { SPECIES, SKILLS, ELEM_CHART, ZONES, CAPTURE_ITEMS } from '../constants/index.js';
 import { gameState, getFormationPets } from '../state.js';
 import { calcCaptureRate, attemptCapture, pauseBattle, resumeBattle } from '../systems/capture.js';
@@ -8,6 +8,57 @@ import { renderReserve } from './dex-ui.js';
 import { showModal, closeModal } from '../utils.js';
 import { createSpriteElement, showDamageNumber } from './sprites.js';
 import { bindTooltip, skillTooltipHTML } from './tooltip.js';
+
+// === HP快照：用于检测HP变化并播放伤害动画 ===
+let _lastHpSnapshot = {}; // { 'a0': 1200, 'a1': 800, 'e0': 500, ... }
+
+function takeHpSnapshot() {
+  const snap = {};
+  for (let i = 0; i < 6; i++) {
+    const pet = gameState.formation[i];
+    if (pet) snap['a' + i] = pet.currentHp;
+  }
+  gameState.enemies.forEach((e, idx) => {
+    snap['e' + idx] = e.currentHp;
+  });
+  return snap;
+}
+
+function playDamageAnimations(oldSnap) {
+  // 延迟一帧等DOM渲染完毕
+  requestAnimationFrame(() => {
+    for (const key in oldSnap) {
+      const oldHp = oldSnap[key];
+      let newHp;
+      if (key.startsWith('a')) {
+        const idx = parseInt(key.slice(1));
+        const pet = gameState.formation[idx];
+        newHp = pet ? pet.currentHp : 0;
+      } else {
+        const idx = parseInt(key.slice(1));
+        const enemy = gameState.enemies[idx];
+        newHp = enemy ? enemy.currentHp : 0;
+      }
+
+      const diff = oldHp - newHp;
+      if (diff === 0) continue;
+
+      const el = document.querySelector('[data-unit-id="' + key + '"]');
+      if (!el) continue;
+
+      if (diff > 0) {
+        // 受伤 - 红色伤害数字 + 闪光
+        const isBigHit = diff > (oldHp * 0.3); // 大于30%HP算暴击级
+        showDamageNumber(el, diff, isBigHit, false);
+        el.classList.add('hit-flash');
+        setTimeout(() => el.classList.remove('hit-flash'), 250);
+      } else if (diff < 0) {
+        // 回复 - 绿色
+        showDamageNumber(el, Math.abs(diff), false, true);
+      }
+    }
+  });
+}
 
 // Capture item picker
 window._showCapturePicker = function(idx) {
@@ -50,6 +101,7 @@ export function renderZoneSelector() {
       gameState.enemies = spawnEnemies();
       gameState.captureMode = false;
       gameState.captureTargetIdx = -1;
+      _lastHpSnapshot = {}; // 切区域重置快照
       renderBattle();
       renderZoneSelector();
     };
@@ -63,6 +115,12 @@ export function renderBattle() {
 
   const battleArea = document.getElementById('battle-area');
   if (!battleArea) return;
+
+  // 先拍当前HP快照（用于和上帧对比）
+  const currentSnap = takeHpSnapshot();
+  const prevSnap = _lastHpSnapshot;
+  _lastHpSnapshot = currentSnap;
+
   battleArea.innerHTML = '';
 
   // === 左右对阵布局 ===
@@ -88,7 +146,6 @@ export function renderBattle() {
   for (let i = 0; i < 6; i++) {
     const pet = gameState.formation[i];
     if (!pet) {
-      // 空位占位
       const empty = document.createElement('div');
       empty.className = 'battle-unit-card empty-slot';
       if (i < 3) allyFront.appendChild(empty);
@@ -112,7 +169,6 @@ export function renderBattle() {
   allyPanel.appendChild(allyFrontLabel);
   allyPanel.appendChild(allyFront);
 
-  // 只有后排有宠物才显示
   const hasBackRow = [3,4,5].some(i => gameState.formation[i]);
   if (hasBackRow) {
     const allyBackLabel = document.createElement('div');
@@ -164,6 +220,11 @@ export function renderBattle() {
   battleArea.appendChild(allyPanel);
   battleArea.appendChild(vsDiv);
   battleArea.appendChild(enemyPanel);
+
+  // === 播放伤害/回复动画 ===
+  if (Object.keys(prevSnap).length > 0) {
+    playDamageAnimations(prevSnap);
+  }
 
   // === 战斗日志 ===
   const logEl = document.getElementById('battle-log');
