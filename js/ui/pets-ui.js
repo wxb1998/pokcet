@@ -1,9 +1,9 @@
 // 宠物列表 + 宠物详情 + 排序 + 批量出售
-import { SPECIES, SKILLS, ELEM_CHART, PERSONALITIES, QUALITY_NAMES, TALENTS, GRADE_COLORS, GRADE_NAMES } from '../constants/index.js';
+import { SPECIES, SKILLS, ELEM_CHART, PERSONALITIES, QUALITY_NAMES, TALENTS, GRADE_COLORS, GRADE_NAMES, STATUS_EFFECTS } from '../constants/index.js';
 import { gameState } from '../state.js';
 import { showModal, closeModal, showToast } from '../utils.js';
 import { expForLevel, calcAllStats, getAptFromIV, equipSkill, unequipSkill, swapSkillSlots, syncBattleSkills } from '../systems/pet.js';
-import { equipTreasure } from '../systems/treasure.js';
+// import { equipTreasure } from '../systems/treasure.js';  // 宝物系统暂时注释
 import { randInt } from '../utils.js';
 import { renderHeader } from './header-ui.js';
 
@@ -11,6 +11,7 @@ let _petSortKey = 'level';
 let _petSortAsc = false;
 let _petBatchMode = false;
 let _petBatchSelected = new Set();
+let _skillBookFilter = 'all'; // all | common | fine | rare | legend | equipped | unequipped
 
 // 暴露到 window 供 onclick 调用
 
@@ -63,10 +64,18 @@ window._replaceSkillSlot = function(petId, slotIdx, bookIdx) {
   showPetDetail(pet);
 };
 
-window._equipTreasure = function(trId, petId) {
-  equipTreasure(trId, petId);
-  closeModal();
-  renderPets();
+// 宝物系统暂时注释
+// window._equipTreasure = function(trId, petId) {
+//   equipTreasure(trId, petId);
+//   closeModal();
+//   renderPets();
+// };
+
+// 技能书筛选
+window._setSkillBookFilter = function(petId, filter) {
+  _skillBookFilter = filter;
+  const pet = gameState.pets.find(p => p.id === petId);
+  if (pet) { closeModal(); showPetDetail(pet); }
 };
 
 window._useTalentFruit = function(petId, stat) {
@@ -202,7 +211,7 @@ export function renderPets() {
       + ivHTML
       + '<div class="pet-stats"><span>HP:' + pet.maxHp + '</span><span>ATK:' + pet.atk + '</span><span>DEF:' + pet.def + '</span><span>SPD:' + pet.spd + '</span></div>'
       + '<div class="pet-skills-row">' + skillsHTML + '</div>'
-      + '<div style="font-size:10px;color:#666;margin-top:4px;">' + compText + ' | ' + (pet.treasure ? '宝物:' + pet.treasure.name + '+' + pet.treasure.enhanceLevel : '未装备宝物') + '</div>'
+      + '<div style="font-size:10px;color:#666;margin-top:4px;">' + compText + '</div>'
       + '<div class="exp-bar"><div class="exp-fill" style="width:' + expPct + '%"></div></div>'
       + '<div style="font-size:9px;color:#555;margin-top:2px;">EXP: ' + pet.exp + '/' + expForLevel(pet.level) + ' (' + expPct + '%)' + (inForm ? ' [出战中]' : '') + '</div>';
 
@@ -263,7 +272,19 @@ function showPetDetail(pet) {
   const typeMap = { single:'单体', aoe:'群攻', self:'自身', ally_single:'单体队友', ally_all:'全体队友', link:'联动' };
   const equippedCount = pet.equippedSkills.filter(v => v != null).length;
 
-  // --- 装备槽（4格，显示优先级序号 + 上下箭头 + 卸下按钮）---
+  // 辅助：生成状态效果描述
+  function statusEffectDesc(eff) {
+    if (!eff) return '';
+    const meta = STATUS_EFFECTS[eff.type];
+    if (meta) return meta.icon + meta.name + (eff.baseChance ? ' ' + Math.floor(eff.baseChance * 100) + '%' : '') + (eff.duration ? ' ' + eff.duration + '回合' : '');
+    if (eff.type === 'heal') return '💚 回复 ' + (eff.baseHeal || 0) + (eff.atkRatio ? '+' + Math.floor(eff.atkRatio*100) + '%ATK' : '') + (eff.hpRatio ? '+' + Math.floor(eff.hpRatio*100) + '%HP' : '');
+    if (eff.type === 'shield') return '🛡 护盾';
+    if (eff.type === 'teamHeal') return '💚 全队治疗';
+    if (eff.type === 'cleanse_and_shield') return '✨ 驱散+护盾';
+    return '';
+  }
+
+  // --- 装备槽（4格，显示优先级序号 + 详细信息 + 上下箭头 + 卸下按钮）---
   html += '<h4 style="color:#e94560;">装备槽 (' + equippedCount + '/4) <span style="font-size:11px;color:#888;font-weight:normal;">① 优先释放</span></h4>';
   for (let slot = 0; slot < 4; slot++) {
     const bookIdx = pet.equippedSkills[slot];
@@ -274,32 +295,66 @@ function showPetDetail(pet) {
       if (!sd) continue;
       const gc = GRADE_COLORS[sd.grade] || '#ccc';
       const gn = GRADE_NAMES[sd.grade] || '';
-      html += '<div style="padding:6px;margin:3px 0;background:rgba(255,255,255,0.07);border-radius:4px;border-left:4px solid ' + gc + ';display:flex;align-items:center;gap:6px;">';
-      // 优先级序号
-      html += '<span style="font-size:16px;min-width:20px;">' + slotLabel + '</span>';
-      // 技能信息
-      html += '<div style="flex:1;">';
-      html += '<strong style="color:' + gc + ';">' + sd.name + '</strong> <span style="color:' + gc + ';font-size:11px;">[' + gn + ']</span> Lv.' + entry.level;
-      html += ' <span style="color:#888;font-size:11px;">威力:' + (sd.power || '-') + ' CD:' + sd.cooldown + ' ' + (typeMap[sd.type] || '') + '</span>';
+      html += '<div class="skill-equip-slot" style="border-left-color:' + gc + ';">';
+      html += '<span class="slot-label">' + slotLabel + '</span>';
+      html += '<div class="slot-info">';
+      html += '<div class="skill-name" style="color:' + gc + ';">' + sd.name + ' <span style="font-size:10px;">[' + gn + ']</span> Lv.' + entry.level + '</div>';
+      html += '<div class="skill-meta">威力:' + (sd.power || '-') + ' CD:' + sd.cooldown + ' ' + (typeMap[sd.type] || '') + ' 元素:' + (sd.elem || '普') + '</div>';
+      if (sd.desc) html += '<div class="skill-desc">' + sd.desc + '</div>';
+      const seDesc = statusEffectDesc(sd.statusEffect);
+      if (seDesc) html += '<div class="skill-desc" style="color:#ff9800;">' + seDesc + '</div>';
       html += '</div>';
-      // 操作按钮
-      html += '<div style="display:flex;gap:3px;flex-shrink:0;">';
+      html += '<div class="slot-actions">';
       if (slot > 0) html += '<button class="btn-sm" onclick="window._moveSkillUp(' + pet.id + ',' + slot + ')" title="上移优先级">↑</button>';
       if (slot < 3 && pet.equippedSkills[slot + 1] != null) html += '<button class="btn-sm" onclick="window._moveSkillDown(' + pet.id + ',' + slot + ')" title="下移优先级">↓</button>';
       html += '<button class="btn-sm" style="background:#e53935;color:#fff;" onclick="window._unequipSkillSlot(' + pet.id + ',' + slot + ')">卸下</button>';
       html += '</div></div>';
     } else {
-      html += '<div style="padding:6px;margin:3px 0;background:rgba(255,255,255,0.02);border-radius:4px;border:1px dashed #444;color:#555;display:flex;align-items:center;gap:6px;">';
-      html += '<span style="font-size:16px;min-width:20px;">' + slotLabel + '</span>';
-      html += '<span>空槽位</span>';
+      html += '<div class="skill-equip-slot empty">';
+      html += '<span class="slot-label">' + slotLabel + '</span>';
+      html += '<span style="color:#555;">空槽位</span>';
       html += '</div>';
     }
   }
 
-  // --- 技能书（所有已领悟技能列表，可装备/替换）---
+  // --- 技能书（所有已领悟技能列表，带筛选 + 可装备/替换）---
   if (pet.skillBook && pet.skillBook.length > 0) {
     html += '<h4 style="color:#42a5f5;margin-top:10px;">技能书 (' + pet.skillBook.length + '个已领悟)</h4>';
-    pet.skillBook.forEach((entry, idx) => {
+
+    // 筛选工具栏
+    html += '<div class="skill-filter-bar">';
+    const filters = [
+      ['all', '全部'], ['common', '普通'], ['fine', '精良'], ['rare', '稀有'], ['legend', '传说'],
+      ['equipped', '已装备'], ['unequipped', '未装备']
+    ];
+    filters.forEach(([key, label]) => {
+      html += '<button class="skill-filter-btn' + (_skillBookFilter === key ? ' active' : '') + '" onclick="window._setSkillBookFilter(' + pet.id + ',\'' + key + '\')">' + label + '</button>';
+    });
+    html += '</div>';
+
+    // 过滤+排序
+    const filteredBook = pet.skillBook.map((entry, idx) => ({ entry, idx })).filter(({ entry, idx }) => {
+      const sd = SKILLS[entry.skillId];
+      if (!sd) return false;
+      const isEq = pet.equippedSkills.indexOf(idx) >= 0;
+      if (_skillBookFilter === 'all') return true;
+      if (_skillBookFilter === 'equipped') return isEq;
+      if (_skillBookFilter === 'unequipped') return !isEq;
+      return sd.grade === _skillBookFilter;
+    });
+
+    // 按品质排序：legend > rare > fine > common
+    const gradeOrder = { legend: 0, rare: 1, fine: 2, common: 3 };
+    filteredBook.sort((a, b) => {
+      const sdA = SKILLS[a.entry.skillId], sdB = SKILLS[b.entry.skillId];
+      return (gradeOrder[sdA.grade] || 9) - (gradeOrder[sdB.grade] || 9);
+    });
+
+    if (filteredBook.length === 0) {
+      html += '<p style="color:#555;font-size:11px;padding:6px;">没有匹配的技能</p>';
+    }
+
+    filteredBook.forEach(({ entry, idx }) => {
       const sd = SKILLS[entry.skillId];
       if (!sd) return;
       const gc = GRADE_COLORS[sd.grade] || '#ccc';
@@ -308,21 +363,20 @@ function showPetDetail(pet) {
       const isEquipped = equippedSlot >= 0;
       const hasEmpty = pet.equippedSkills.indexOf(null) >= 0;
 
-      html += '<div style="padding:5px 6px;margin:2px 0;background:rgba(255,255,255,' + (isEquipped ? '0.07' : '0.02') + ');border-radius:4px;border-left:3px solid ' + gc + ';display:flex;align-items:center;gap:6px;">';
-      // 技能信息
-      html += '<div style="flex:1;">';
-      html += '<span style="color:' + gc + ';font-weight:bold;">' + sd.name + '</span> <span style="color:' + gc + ';font-size:10px;">[' + gn + ']</span> Lv.' + entry.level;
-      html += ' <span style="color:#888;font-size:10px;">威力:' + (sd.power || '-') + ' CD:' + sd.cooldown + ' ' + (typeMap[sd.type] || '') + '</span>';
-      if (sd.desc) html += '<div style="color:#777;font-size:10px;margin-top:1px;">' + sd.desc + '</div>';
+      html += '<div class="skill-book-item' + (isEquipped ? ' equipped' : '') + '" style="border-left-color:' + gc + ';">';
+      html += '<div class="skill-info">';
+      html += '<div class="skill-name" style="color:' + gc + ';">' + sd.name + ' <span style="font-size:10px;">[' + gn + ']</span> Lv.' + entry.level + '</div>';
+      html += '<div class="skill-meta">威力:' + (sd.power || '-') + ' CD:' + sd.cooldown + ' ' + (typeMap[sd.type] || '') + ' 元素:' + (sd.elem || '普') + '</div>';
+      if (sd.desc) html += '<div class="skill-desc">' + sd.desc + '</div>';
+      const seDesc = statusEffectDesc(sd.statusEffect);
+      if (seDesc) html += '<div class="skill-desc" style="color:#ff9800;">' + seDesc + '</div>';
       html += '</div>';
-      // 操作
-      html += '<div style="flex-shrink:0;">';
+      html += '<div class="skill-action">';
       if (isEquipped) {
         html += '<span style="color:#4caf50;font-size:11px;">✓ 槽位' + (equippedSlot + 1) + '</span>';
       } else if (hasEmpty) {
         html += '<button class="btn-sm" style="background:#1976d2;color:#fff;" onclick="window._equipSkillToSlot(' + pet.id + ',' + idx + ',-1)">装备</button>';
       } else {
-        // 所有槽位已满，显示替换下拉
         html += '<select style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:2px;" onchange="if(this.value>=0)window._replaceSkillSlot(' + pet.id + ',parseInt(this.value),' + idx + ')">';
         html += '<option value="-1">替换...</option>';
         for (let s = 0; s < 4; s++) {
@@ -349,22 +403,22 @@ function showPetDetail(pet) {
     html += '</p>';
   }
 
-  // 宝物区
-  html += '<h4 style="color:#ffd700;margin-top:12px;">宝物</h4>';
-  if (pet.treasure) {
-    html += '<p>' + pet.treasure.name + ' +' + pet.treasure.enhanceLevel + ' [' + QUALITY_NAMES[pet.treasure.quality] + ']</p>';
-  } else {
-    const available = gameState.treasures.filter(t => !t.equippedTo);
-    if (available.length > 0) {
-      html += '<p>未装备 - 可用宝物:</p>';
-      available.forEach(t => {
-        html += '<div class="modal-select-item" onclick="window._equipTreasure(' + t.id + ',' + pet.id + ')">'
-          + t.name + ' [' + QUALITY_NAMES[t.quality] + '] +' + t.enhanceLevel + '</div>';
-      });
-    } else {
-      html += '<p>未装备，暂无可用宝物</p>';
-    }
-  }
+  // 宝物区 - 暂时注释
+  // html += '<h4 style="color:#ffd700;margin-top:12px;">宝物</h4>';
+  // if (pet.treasure) {
+  //   html += '<p>' + pet.treasure.name + ' +' + pet.treasure.enhanceLevel + ' [' + QUALITY_NAMES[pet.treasure.quality] + ']</p>';
+  // } else {
+  //   const available = gameState.treasures.filter(t => !t.equippedTo);
+  //   if (available.length > 0) {
+  //     html += '<p>未装备 - 可用宝物:</p>';
+  //     available.forEach(t => {
+  //       html += '<div class="modal-select-item" onclick="window._equipTreasure(' + t.id + ',' + pet.id + ')">'
+  //         + t.name + ' [' + QUALITY_NAMES[t.quality] + '] +' + t.enhanceLevel + '</div>';
+  //     });
+  //   } else {
+  //     html += '<p>未装备，暂无可用宝物</p>';
+  //   }
+  // }
 
   showModal(sp.name + ' 详情', html, [{ text: '关闭', action: null }]);
 }

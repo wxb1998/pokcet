@@ -9,6 +9,54 @@ import { showModal, closeModal } from '../utils.js';
 import { createSpriteElement, showDamageNumber } from './sprites.js';
 import { bindTooltip, skillTooltipHTML } from './tooltip.js';
 
+// === 日志过滤状态 ===
+let _logFilter = 'all'; // all | battle | skill | loot | comprehend
+
+window._setLogFilter = function(filter) {
+  _logFilter = filter;
+  // 重新渲染日志区域
+  const logEl = document.getElementById('battle-log');
+  if (!logEl) return;
+  renderBattleLog(logEl);
+};
+
+function renderBattleLog(logEl) {
+  logEl.innerHTML = '';
+
+  // 过滤按钮
+  const filterBar = document.createElement('div');
+  filterBar.className = 'log-filter-bar';
+  const filterOpts = [
+    ['all', '全部'], ['battle', '战斗'], ['skill', '状态'], ['comprehend', '领悟'], ['loot', '掉落']
+  ];
+  filterOpts.forEach(([key, label]) => {
+    const btn = document.createElement('button');
+    btn.className = 'log-filter-btn' + (_logFilter === key ? ' active' : '');
+    btn.textContent = label;
+    btn.onclick = (e) => { e.stopPropagation(); window._setLogFilter(key); };
+    filterBar.appendChild(btn);
+  });
+  logEl.appendChild(filterBar);
+
+  // 过滤日志
+  const logs = gameState.battleLog.slice(-50).filter(l => {
+    if (_logFilter === 'all') return true;
+    if (_logFilter === 'battle') return l.cls === 'log-ally-dmg' || l.cls === 'log-enemy-dmg' || l.cls === 'log-dmg' || l.cls === 'log-heal';
+    if (_logFilter === 'skill') return l.cls === 'log-skill';
+    if (_logFilter === 'comprehend') return l.cls === 'log-comprehend';
+    if (_logFilter === 'loot') return l.cls === 'log-loot' || l.cls === 'log-capture';
+    return true;
+  });
+
+  logs.slice(-20).forEach(l => {
+    const line = document.createElement('div');
+    line.className = 'log-line ' + l.cls;
+    line.textContent = l.msg;
+    logEl.appendChild(line);
+  });
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
 // === HP快照：用于检测HP变化并播放伤害动画 ===
 let _lastHpSnapshot = {};
 
@@ -243,14 +291,7 @@ export function renderBattle() {
   // === 战斗日志 ===
   const logEl = document.getElementById('battle-log');
   if (!logEl) return;
-  logEl.innerHTML = '';
-  gameState.battleLog.slice(-20).forEach(l => {
-    const line = document.createElement('div');
-    line.className = 'log-line ' + l.cls;
-    line.textContent = l.msg;
-    logEl.appendChild(line);
-  });
-  logEl.scrollTop = logEl.scrollHeight;
+  renderBattleLog(logEl);
 }
 
 // === 单位卡片 ===

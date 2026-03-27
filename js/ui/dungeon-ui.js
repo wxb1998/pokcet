@@ -1,9 +1,10 @@
 // 副本界面 - 符文塔选层 + 实时动画战斗
 import { gameState, getFormationPets } from '../state.js';
 import { DUNGEON_FLOORS, STAMINA_MAX } from '../constants/index.js';
-import { RUNE_SETS, RUNE_SLOTS, RUNE_QUALITY, SPECIES, SKILLS, ELEM_CHART } from '../constants/index.js';
+import { RUNE_SETS, RUNE_SLOTS, RUNE_QUALITY, SPECIES, SKILLS, ELEM_CHART, STATUS_EFFECTS } from '../constants/index.js';
 import { showModal, showToast } from '../utils.js';
 import { regenStamina, createBoss, consumeStamina, grantDungeonRewards } from '../systems/dungeon.js';
+import { tryApplyStatus, applyBuff, calcHealAmount, calcShieldAmount, processStatusEffects, getEffectiveAtk, getEffectiveDef, calcDamage } from '../systems/battle.js';
 import { randInt } from '../utils.js';
 import { renderHeader } from './header-ui.js';
 import { renderRunes } from './rune-ui.js';
@@ -106,8 +107,8 @@ function startDungeonBattle(floorId) {
     isEnemy: false,
     buffDef: 0,
     regen: 0,
+    statusEffects: [],
     _runeEffects: fp.pet._runeEffects,
-    treasure: fp.pet.treasure,
     talent: fp.pet.talent,
     skills: fp.pet.skills.map(s => ({ ...s, cooldownLeft: 0 }))
   }));
@@ -148,79 +149,218 @@ function dungeonBattleTick() {
   for (const unit of units) {
     if (unit.currentHp <= 0) continue;
 
-    // 回复/buff
-    if (unit.regen > 0) {
-      const h = Math.floor(unit.maxHp * 0.08);
-      unit.currentHp = Math.min(unit.maxHp, unit.currentHp + h);
-      unit.regen--;
-    }
-    if (unit.buffDef > 0) unit.buffDef--;
-
-    // 选技能
-    let skill = null;
-    if (unit.skills && unit.skills.length > 0) {
-      const ready = unit.skills.filter(s => s.cooldownLeft <= 0);
-      if (ready.length > 0) {
-        ready.sort((a, b) => b.priority - a.priority);
-        skill = ready[0];
-      }
-    }
-
-    const isAlly = !unit.isEnemy;
-    const targetPool = isAlly
-      ? enemies.filter(e => e.currentHp > 0)
-      : allies.filter(a => a.currentHp > 0);
-    if (targetPool.length === 0) break;
-
-    const target = targetPool[randInt(0, targetPool.length - 1)];
-    const skillData = skill ? SKILLS[skill.skillId] : null;
-
-    // 自身增益（新statusEffect系统）
-    if (skillData && skillData.type === 'self') {
-      const eff = skillData.statusEffect;
-      if (eff) {
-        if (eff.type === 'heal') {
-          const base = eff.baseHeal || 0;
-          const atkBonus = (eff.atkRatio || 0) * (unit.atk || 50);
-          const hpBonus = (eff.hpRatio || 0) * (unit.maxHp || 500);
-          const h = Math.floor(base + atkBonus + hpBonus);
-          unit.currentHp = Math.min(unit.maxHp, unit.currentHp + h);
-          log.push('R' + round + ' ' + unit.name + ' ' + skillData.name + ' +' + h + 'HP');
-        } else if (eff.type === 'regen') {
-          unit.regen = eff.duration || 3;
-          log.push('R' + round + ' ' + unit.name + ' ' + skillData.name + ' 持续回复');
-        } else if (eff.type === 'defUp' || eff.type === 'shield') {
-          unit.buffDef = eff.duration || 3;
-          log.push('R' + round + ' ' + unit.name + ' ' + skillData.name + ' 防御↑');
-        } else {
-          log.push('R' + round + ' ' + unit.name + ' ' + skillData.name);
-        }
-      }
-      if (skill) skill.cooldownLeft = skillData.cooldown || 0;
+    // 处理状态效果（毒/灼烧/冰冻/麻痹等）
+    const { skip, silenced } = processStatusEffects(unit);
+    if (skip) {
+      log.push('R' + round + ' ' + unit.name + ' 无法行动!');
       if (unit.skills) unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
       continue;
     }
 
-    // 伤害
-    const power = skillData ? skillData.power : 50;
-    const atkVal = unit.atk || 50;
-    const defVal = target.def || 30;
-    const defBuff = target.buffDef > 0 ? 0.7 : 1.0;
-    let dmg = Math.max(1, Math.floor((power * atkVal / (defVal + 50)) * defBuff) + randInt(-3, 3));
-    const isCrit = Math.random() < 0.1;
-    if (isCrit) dmg = Math.floor(dmg * 1.5);
-    if (!unit.isEnemy && unit.talent === 'fierce') dmg = Math.floor(dmg * 1.08);
-
-    // 符文吸血
-    if (!unit.isEnemy && unit._runeEffects && unit._runeEffects.pctStats.lifesteal > 0) {
-      const ls = Math.floor(dmg * unit._runeEffects.pctStats.lifesteal / 100);
-      unit.currentHp = Math.min(unit.maxHp, unit.currentHp + ls);
+    // 选技能（被沉默只能普攻）
+    let skill = null;
+    if (!silenced && unit.skills && unit.skills.length > 0) {
+      const sorted = [...unit.skills].sort((a, b) => (a.priority || 0) - (b.priority || 0));
+      skill = sorted.find(s => s.cooldownLeft <= 0) || null;
     }
 
-    target.currentHp = Math.max(0, target.currentHp - dmg);
-    const skillName = skillData ? skillData.name : '普攻';
-    const critText = isCrit ? '暴击!' : '';
-    log.push('R' + round + ' ' + unit.name + ' → ' + skillName + ' → ' + target.name + ' ' + dmg + critText + (target.currentHp <= 0 ? ' 💀' : ''));
+    const isAlly = !unit.isEnemy;
+    const allyPool = isAlly ? allies.filter(a => a.currentHp > 0) : enemies.filter(e => e.currentHp > 0);
+    const enemyPool = isAlly ? enemies.filter(e => e.currentHp > 0) : allies.filter(a => a.currentHp > 0);
+    if (enemyPool.length === 0) break;
+
+    const skillData = skill ? SKILLS[skill.skillId] : null;
+    const eff = skillData ? skillData.statusEffect : null;
+
+    // === 自身增益/回复 ===
+    if (skillData && skillData.type === 'self') {
+      if (eff) {
+        if (eff.type === 'heal') {
+          const h = calcHealAmount(unit, eff);
+          unit.currentHp = Math.min(unit.maxHp, unit.currentHp + h);
+          log.push('R' + round + ' ' + unit.name + ' ' + skillData.name + ' +' + h + 'HP');
+        } else if (eff.type === 'shield') {
+          const shieldAmt = calcShieldAmount(unit, eff);
+          if (!unit.statusEffects) unit.statusEffects = [];
+          unit.statusEffects.push({ type: 'shield', turnsLeft: 3, value: shieldAmt });
+          log.push('R' + round + ' ' + unit.name + ' ' + skillData.name + ' 护盾+' + shieldAmt);
+        } else if (eff.type === 'regen') {
+          if (!unit.statusEffects) unit.statusEffects = [];
+          unit.statusEffects.push({ type: 'regen', turnsLeft: eff.duration || 3, value: 0 });
+          log.push('R' + round + ' ' + unit.name + ' ' + skillData.name + ' 持续回复');
+        } else {
+          applyBuff(unit, unit, eff);
+          log.push('R' + round + ' ' + unit.name + ' ' + skillData.name);
+        }
+      }
+      skill.cooldownLeft = skillData.cooldown || 0;
+      unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
+      continue;
+    }
+
+    // === ally_single: 治疗血最低队友 ===
+    if (skillData && skillData.type === 'ally_single') {
+      if (eff) {
+        let target = null, minRatio = 2;
+        allyPool.forEach(a => {
+          const ratio = a.currentHp / a.maxHp;
+          if (ratio < minRatio) { minRatio = ratio; target = a; }
+        });
+        if (!target) target = unit;
+        if (eff.type === 'heal' || eff.type === 'purify') {
+          const h = calcHealAmount(unit, eff);
+          target.currentHp = Math.min(target.maxHp, target.currentHp + h);
+          log.push('R' + round + ' ' + unit.name + ' ' + skillData.name + ' → ' + target.name + ' +' + h + 'HP');
+        }
+      }
+      skill.cooldownLeft = skillData.cooldown || 0;
+      unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
+      continue;
+    }
+
+    // === ally_all: 全体队友技能 ===
+    if (skillData && skillData.type === 'ally_all') {
+      if (eff) {
+        if (eff.type === 'heal') {
+          const h = calcHealAmount(unit, eff);
+          allyPool.forEach(a => { a.currentHp = Math.min(a.maxHp, a.currentHp + h); });
+          log.push('R' + round + ' ' + unit.name + ' ' + skillData.name + ' 全队+' + h + 'HP');
+        } else if (eff.type === 'cleanse' && eff.cleanseAll) {
+          allyPool.forEach(a => {
+            if (a.statusEffects) a.statusEffects = a.statusEffects.filter(s => { const m = STATUS_EFFECTS[s.type]; return !(m && m.isDebuff); });
+          });
+          log.push('R' + round + ' ' + unit.name + ' ' + skillData.name + ' 驱散全队负面');
+        } else {
+          allyPool.forEach(a => applyBuff(unit, a, eff));
+          log.push('R' + round + ' ' + unit.name + ' ' + skillData.name);
+        }
+      }
+      skill.cooldownLeft = skillData.cooldown || 0;
+      unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
+      continue;
+    }
+
+    // === 联动技 ===
+    if (skillData && skillData.type === 'link') {
+      const linkElem = skillData.linkElem;
+      const linkMin = skillData.linkMin || 2;
+      const sameElemAllies = allyPool.filter(a => a.elem === linkElem);
+
+      if (sameElemAllies.length < linkMin) {
+        log.push('R' + round + ' ' + unit.name + ' ' + skillData.name + ' 同元素不足!');
+        skill.cooldownLeft = 2;
+        unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
+        continue;
+      }
+
+      log.push('R' + round + ' 【联动技】' + skillData.name + ' 发动!');
+
+      // 同元素宠物各攻击一次
+      if (enemyPool.length > 0 && skillData.power > 0) {
+        sameElemAllies.forEach(ally => {
+          if (ally.currentHp <= 0) return;
+          const target = enemyPool[Math.floor(Math.random() * enemyPool.length)];
+          if (!target || target.currentHp <= 0) return;
+          const result = calcDamage(ally, target, { ...skillData, enhanceLevel: skill.enhanceLevel || 0 });
+          let dmg = result.damage;
+          // 护盾吸收
+          if (target.statusEffects) {
+            const shield = target.statusEffects.find(s => s.type === 'shield');
+            if (shield && shield.value > 0) {
+              const absorbed = Math.min(shield.value, dmg);
+              shield.value -= absorbed; dmg -= absorbed;
+              if (shield.value <= 0) target.statusEffects = target.statusEffects.filter(s => s.type !== 'shield');
+            }
+          }
+          target.currentHp = Math.max(0, target.currentHp - dmg);
+          log.push('  ' + ally.name + ' 联动攻击 ' + target.name + ' ' + dmg + (result.isCrit ? '暴击!' : ''));
+        });
+      }
+
+      // 对敌方施加状态
+      if (eff) { enemyPool.forEach(t => { if (t.currentHp > 0) tryApplyStatus(unit, t, eff); }); }
+
+      // 联动治疗
+      if (skillData.linkHeal) {
+        if (skillData.linkHeal.type === 'regen') {
+          allyPool.forEach(a => { if (!a.statusEffects) a.statusEffects = []; a.statusEffects.push({ type: 'regen', turnsLeft: skillData.linkHeal.duration || 3, value: 0 }); });
+          log.push('  全队持续回复!');
+        } else {
+          const h = calcHealAmount(unit, skillData.linkHeal);
+          allyPool.forEach(a => { a.currentHp = Math.min(a.maxHp, a.currentHp + h); });
+          log.push('  全队回复 ' + h + ' HP!');
+        }
+      }
+
+      // 联动buff
+      if (skillData.linkBuff) {
+        const lb = skillData.linkBuff;
+        allyPool.forEach(a => {
+          if (!a.statusEffects) a.statusEffects = [];
+          if (lb.speedUp) a.statusEffects.push({ type: 'speedUp', turnsLeft: lb.speedUpDuration || 2, value: 0.30 });
+          if (lb.evasion) a.statusEffects.push({ type: 'evasion', turnsLeft: lb.evasionDuration || 2, value: lb.evasion });
+        });
+      }
+
+      // cleanse_and_shield
+      if (eff && eff.type === 'cleanse_and_shield') {
+        allyPool.forEach(a => { if (a.statusEffects) a.statusEffects = a.statusEffects.filter(s => { const m = STATUS_EFFECTS[s.type]; return !(m && m.isDebuff); }); });
+        const shieldAmt = calcShieldAmount(unit, { defRatio: eff.shieldDefRatio || 1.5, hpRatio: eff.shieldHpRatio || 0.04 });
+        allyPool.forEach(a => { if (!a.statusEffects) a.statusEffects = []; a.statusEffects.push({ type: 'shield', turnsLeft: 3, value: shieldAmt }); });
+        log.push('  驱散全负面 + 全队护盾 ' + shieldAmt);
+      }
+
+      // 全队buff（defUp/atkUp）
+      if (eff && (eff.type === 'defUp' || eff.type === 'atkUp') && eff.baseChance >= 1.0) {
+        allyPool.forEach(a => applyBuff(unit, a, eff));
+      }
+
+      skill.cooldownLeft = skillData.cooldown || 0;
+      unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
+
+      if (enemies.every(e => e.currentHp <= 0) || allies.every(a => a.currentHp <= 0)) break;
+      continue;
+    }
+
+    // === 伤害技能 (single / aoe) 或普攻 ===
+    const targets = (skillData && skillData.type === 'aoe')
+      ? enemyPool
+      : [enemyPool[randInt(0, enemyPool.length - 1)]];
+
+    targets.forEach(target => {
+      if (!target || target.currentHp <= 0) return;
+      const power = skillData ? skillData.power : 50;
+      const atkVal = getEffectiveAtk(unit);
+      const defVal = getEffectiveDef(target);
+      let dmg = Math.max(1, Math.floor((power * atkVal / (defVal + 50))) + randInt(-3, 3));
+      const isCrit = Math.random() < 0.1;
+      if (isCrit) dmg = Math.floor(dmg * 1.5);
+      if (!unit.isEnemy && unit.talent === 'fierce') dmg = Math.floor(dmg * 1.08);
+
+      // 护盾吸收
+      if (target.statusEffects) {
+        const shield = target.statusEffects.find(s => s.type === 'shield');
+        if (shield && shield.value > 0) {
+          const absorbed = Math.min(shield.value, dmg);
+          shield.value -= absorbed; dmg -= absorbed;
+          if (shield.value <= 0) target.statusEffects = target.statusEffects.filter(s => s.type !== 'shield');
+        }
+      }
+
+      // 符文吸血
+      if (!unit.isEnemy && unit._runeEffects && unit._runeEffects.pctStats.lifesteal > 0) {
+        const ls = Math.floor(dmg * unit._runeEffects.pctStats.lifesteal / 100);
+        unit.currentHp = Math.min(unit.maxHp, unit.currentHp + ls);
+      }
+
+      target.currentHp = Math.max(0, target.currentHp - dmg);
+      const skillName = skillData ? skillData.name : '普攻';
+      const critText = isCrit ? '暴击!' : '';
+      log.push('R' + round + ' ' + unit.name + ' → ' + skillName + ' → ' + target.name + ' ' + dmg + critText + (target.currentHp <= 0 ? ' 💀' : ''));
+
+      // 施加状态效果
+      if (eff) tryApplyStatus(unit, target, eff);
+    });
 
     if (skill) skill.cooldownLeft = skillData ? (skillData.cooldown || 0) : 0;
     if (unit.skills) unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
@@ -400,6 +540,22 @@ function createDungeonUnitCard(unit, idx, isEnemy) {
       skillRow.appendChild(tag);
     });
     info.appendChild(skillRow);
+  }
+
+  // 状态效果图标
+  if (unit.statusEffects && unit.statusEffects.length > 0) {
+    const statusRow = document.createElement('div');
+    statusRow.className = 'unit-status-row';
+    unit.statusEffects.forEach(se => {
+      const meta = STATUS_EFFECTS[se.type];
+      if (!meta) return;
+      const icon = document.createElement('span');
+      icon.className = 'status-icon' + (meta.isDebuff ? ' debuff' : ' buff');
+      icon.textContent = meta.icon;
+      icon.title = meta.name + ' (' + se.turnsLeft + '回合)';
+      statusRow.appendChild(icon);
+    });
+    info.appendChild(statusRow);
   }
 
   div.appendChild(spriteWrap);

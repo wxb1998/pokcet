@@ -133,7 +133,7 @@ export function spawnEnemies() {
 // ===== 状态效果系统 =====
 
 /** 尝试给目标施加状态效果 */
-function tryApplyStatus(caster, target, effect) {
+export function tryApplyStatus(caster, target, effect) {
   if (!effect || !effect.type) return;
   if (!target.statusEffects) target.statusEffects = [];
   const sType = effect.type;
@@ -179,7 +179,7 @@ function tryApplyStatus(caster, target, effect) {
 }
 
 /** 给自己/队友施加buff */
-function applyBuff(caster, target, effect) {
+export function applyBuff(caster, target, effect) {
   if (!target.statusEffects) target.statusEffects = [];
   const sType = effect.type;
   if (sType === 'heal' || sType === 'purify' || sType === 'cleanse' || sType === 'teamHeal' || sType === 'cleanse_and_shield') return; // 这些单独处理
@@ -199,7 +199,7 @@ function applyBuff(caster, target, effect) {
 }
 
 /** 计算治疗量 */
-function calcHealAmount(caster, effect) {
+export function calcHealAmount(caster, effect) {
   const base = effect.baseHeal || 0;
   const atkBonus = (effect.atkRatio || 0) * (caster.atk || 50);
   const hpBonus = (effect.hpRatio || 0) * (caster.maxHp || 500);
@@ -207,14 +207,14 @@ function calcHealAmount(caster, effect) {
 }
 
 /** 计算护盾量 */
-function calcShieldAmount(caster, effect) {
+export function calcShieldAmount(caster, effect) {
   const defBonus = (effect.defRatio || 0) * (caster.def || 50);
   const hpBonus = (effect.hpRatio || 0) * (caster.maxHp || 500);
   return Math.floor(defBonus + hpBonus);
 }
 
 /** 处理单位回合开始的状态效果 */
-function processStatusEffects(unit) {
+export function processStatusEffects(unit) {
   if (!unit.statusEffects) { unit.statusEffects = []; return { skip: false, silenced: false }; }
   let skip = false;
   let silenced = false;
@@ -269,7 +269,7 @@ function processStatusEffects(unit) {
 }
 
 /** 获取单位有效攻击力（含buff/debuff） */
-function getEffectiveAtk(unit) {
+export function getEffectiveAtk(unit) {
   let atk = unit.atk || 50;
   if (!unit.statusEffects) return atk;
   unit.statusEffects.forEach(se => {
@@ -280,7 +280,7 @@ function getEffectiveAtk(unit) {
 }
 
 /** 获取单位有效防御力 */
-function getEffectiveDef(unit) {
+export function getEffectiveDef(unit) {
   let def = unit.def || 30;
   if (!unit.statusEffects) return def;
   unit.statusEffects.forEach(se => {

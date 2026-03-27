@@ -399,6 +399,44 @@ body { font-family: 'Microsoft YaHei','PingFang SC',sans-serif; background:#1a1a
 /* 批量操作底栏 */
 .batch-bar { position:sticky; bottom:0; display:flex; justify-content:space-between; align-items:center; background:linear-gradient(135deg,#16213e,#0f3460); border-radius:8px; padding:10px 14px; margin-top:8px; font-size:13px; border:1px solid rgba(233,69,96,0.3); }
 
+/* ===== 技能装备管理面板 ===== */
+.skill-equip-slot {
+  padding:8px 10px; margin:4px 0; border-radius:6px; display:flex; align-items:center; gap:8px;
+  background:rgba(255,255,255,0.06); border-left:4px solid #555; transition:all 0.2s;
+}
+.skill-equip-slot:hover { background:rgba(255,255,255,0.10); }
+.skill-equip-slot.empty { background:rgba(255,255,255,0.02); border:1px dashed #444; border-left:4px dashed #444; }
+.skill-equip-slot .slot-label { font-size:18px; min-width:24px; text-align:center; flex-shrink:0; }
+.skill-equip-slot .slot-info { flex:1; min-width:0; }
+.skill-equip-slot .slot-info .skill-name { font-weight:bold; font-size:13px; }
+.skill-equip-slot .slot-info .skill-meta { color:#888; font-size:11px; margin-top:2px; }
+.skill-equip-slot .slot-info .skill-desc { color:#777; font-size:10px; margin-top:2px; }
+.skill-equip-slot .slot-actions { display:flex; gap:4px; flex-shrink:0; }
+
+.skill-book-item {
+  padding:8px 10px; margin:3px 0; border-radius:6px; display:flex; align-items:center; gap:8px;
+  background:rgba(255,255,255,0.03); border-left:3px solid #555; transition:all 0.2s; cursor:default;
+}
+.skill-book-item:hover { background:rgba(255,255,255,0.07); }
+.skill-book-item.equipped { background:rgba(76,175,80,0.08); }
+.skill-book-item .skill-info { flex:1; min-width:0; }
+.skill-book-item .skill-info .skill-name { font-weight:bold; font-size:12px; }
+.skill-book-item .skill-info .skill-meta { color:#888; font-size:10px; margin-top:1px; }
+.skill-book-item .skill-info .skill-desc { color:#777; font-size:10px; margin-top:2px; }
+.skill-book-item .skill-action { flex-shrink:0; }
+
+/* 技能书筛选工具栏 */
+.skill-filter-bar { display:flex; gap:4px; flex-wrap:wrap; margin:6px 0; }
+.skill-filter-btn { padding:3px 8px; border:1px solid #444; background:rgba(255,255,255,0.05); color:#aaa; border-radius:4px; cursor:pointer; font-size:10px; transition:all 0.2s; }
+.skill-filter-btn:hover { border-color:#888; color:#e0e0e0; }
+.skill-filter-btn.active { border-color:#e94560; color:#e94560; background:rgba(233,69,96,0.1); }
+
+/* 战斗日志过滤按钮 */
+.log-filter-bar { display:flex; gap:3px; flex-wrap:wrap; margin-bottom:4px; }
+.log-filter-btn { padding:2px 8px; border:1px solid #333; background:rgba(255,255,255,0.04); color:#888; border-radius:4px; cursor:pointer; font-size:10px; transition:all 0.15s; }
+.log-filter-btn:hover { border-color:#666; color:#ccc; }
+.log-filter-btn.active { border-color:#e94560; color:#e94560; }
+
 /* ===== 移动端适配 ===== */
 @media (max-width: 600px) {
   .formation-row { grid-template-columns:repeat(3, 1fr); gap:3px; }
@@ -410,4 +448,13 @@ body { font-family: 'Microsoft YaHei','PingFang SC',sans-serif; background:#1a1a
   .skill-dot { width:15px; height:15px; font-size:8px; }
   .equip-slot-grid { grid-template-columns:repeat(2,1fr); }
   .stats-grid { grid-template-columns:repeat(2,1fr); }
+  /* 技能管理面板移动端 */
+  .skill-equip-slot { padding:10px; gap:6px; }
+  .skill-equip-slot .slot-actions .btn-sm { min-width:36px; min-height:36px; font-size:14px; padding:6px 10px; }
+  .skill-book-item { padding:10px; gap:6px; }
+  .skill-book-item .skill-action .btn-sm { min-width:44px; min-height:36px; font-size:12px; padding:6px 12px; }
+  .skill-book-item select { font-size:13px; min-height:36px; padding:4px 8px; }
+  .skill-filter-bar { gap:3px; }
+  .skill-filter-btn { padding:6px 10px; font-size:12px; min-height:32px; }
+  .log-filter-btn { padding:4px 10px; font-size:11px; min-height:30px; }
 }
