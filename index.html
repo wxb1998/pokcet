@@ -103,10 +103,18 @@
   <!-- ES Module 入口 -->
   <script type="module" src="js/main.js"></script>
 
-  <!-- PWA Service Worker 注册 -->
+  <!-- PWA Service Worker 注册 + 自动更新 -->
   <script>
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      let refreshing = false;
+      // 当新SW接管后自动刷新页面
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!refreshing) { refreshing = true; window.location.reload(); }
+      });
+      navigator.serviceWorker.register('sw.js').then(reg => {
+        // 每次打开页面主动检查更新
+        reg.update();
+      }).catch(() => {});
     }
   </script>
 </body>
