@@ -1,4 +1,4 @@
-// 战斗界面渲染 - 左右对阵 + 像素精灵 + 动画
+// 战斗界面渲染 - 左右对阵 + 阵型(前排/后排) + 像素精灵 + 动画
 import { SPECIES, SKILLS, ELEM_CHART, ZONES, CAPTURE_ITEMS } from '../constants/index.js';
 import { gameState, getFormationPets } from '../state.js';
 import { calcCaptureRate, attemptCapture, pauseBattle, resumeBattle } from '../systems/capture.js';
@@ -65,35 +65,101 @@ export function renderBattle() {
   if (!battleArea) return;
   battleArea.innerHTML = '';
 
-  // 左右对阵布局
+  // === 左右对阵布局 ===
   const allyPanel = document.createElement('div');
   allyPanel.className = 'battle-team ally-team';
   allyPanel.id = 'ally-side';
 
   const vsDiv = document.createElement('div');
   vsDiv.className = 'battle-vs';
-  vsDiv.textContent = 'VS';
+  vsDiv.textContent = '⚔️';
 
   const enemyPanel = document.createElement('div');
   enemyPanel.className = 'battle-team enemy-team';
   enemyPanel.id = 'enemy-side';
 
-  // === 己方 ===
+  // === 己方 - 前排(0-2) + 后排(3-5) ===
+  const allyFront = document.createElement('div');
+  allyFront.className = 'formation-row front-row';
+  const allyBack = document.createElement('div');
+  allyBack.className = 'formation-row back-row';
+
+  let allyCount = 0;
   for (let i = 0; i < 6; i++) {
     const pet = gameState.formation[i];
-    if (!pet) continue;
+    if (!pet) {
+      // 空位占位
+      const empty = document.createElement('div');
+      empty.className = 'battle-unit-card empty-slot';
+      if (i < 3) allyFront.appendChild(empty);
+      else allyBack.appendChild(empty);
+      continue;
+    }
+    allyCount++;
     const unit = createUnitCard(pet, i, false);
-    allyPanel.appendChild(unit);
-  }
-  if (allyPanel.children.length === 0) {
-    allyPanel.innerHTML = '<p style="color:#666;padding:20px;">无上阵宠物</p>';
+    if (i < 3) allyFront.appendChild(unit);
+    else allyBack.appendChild(unit);
   }
 
-  // === 敌方 ===
+  const allyLabel = document.createElement('div');
+  allyLabel.className = 'team-label';
+  allyLabel.textContent = '🛡️ 我方';
+  allyPanel.appendChild(allyLabel);
+
+  const allyFrontLabel = document.createElement('div');
+  allyFrontLabel.className = 'row-tag';
+  allyFrontLabel.textContent = '前排';
+  allyPanel.appendChild(allyFrontLabel);
+  allyPanel.appendChild(allyFront);
+
+  // 只有后排有宠物才显示
+  const hasBackRow = [3,4,5].some(i => gameState.formation[i]);
+  if (hasBackRow) {
+    const allyBackLabel = document.createElement('div');
+    allyBackLabel.className = 'row-tag';
+    allyBackLabel.textContent = '后排';
+    allyPanel.appendChild(allyBackLabel);
+    allyPanel.appendChild(allyBack);
+  }
+
+  if (allyCount === 0) {
+    allyPanel.innerHTML = '<p style="color:#666;padding:20px;text-align:center;">无上阵宠物</p>';
+  }
+
+  // === 敌方 - 前排 + 后排 ===
+  const enemyLabel = document.createElement('div');
+  enemyLabel.className = 'team-label enemy-label';
+  enemyLabel.textContent = '👹 敌方';
+  enemyPanel.appendChild(enemyLabel);
+
+  const enemyFront = document.createElement('div');
+  enemyFront.className = 'formation-row front-row';
+  const enemyBack = document.createElement('div');
+  enemyBack.className = 'formation-row back-row';
+
+  let hasEnemyBack = false;
   gameState.enemies.forEach((e, idx) => {
     const unit = createUnitCard(e, idx, true);
-    enemyPanel.appendChild(unit);
+    if (e.row === 'back') {
+      enemyBack.appendChild(unit);
+      hasEnemyBack = true;
+    } else {
+      enemyFront.appendChild(unit);
+    }
   });
+
+  const eFrontLabel = document.createElement('div');
+  eFrontLabel.className = 'row-tag';
+  eFrontLabel.textContent = '前排';
+  enemyPanel.appendChild(eFrontLabel);
+  enemyPanel.appendChild(enemyFront);
+  if (hasEnemyBack) {
+    const eBackLabel = document.createElement('div');
+    eBackLabel.className = 'row-tag';
+    eBackLabel.textContent = '后排';
+    enemyPanel.appendChild(eBackLabel);
+    enemyPanel.appendChild(enemyBack);
+  }
 
   battleArea.appendChild(allyPanel);
   battleArea.appendChild(vsDiv);
@@ -125,7 +191,7 @@ function createUnitCard(unit, idx, isEnemy) {
   // 像素精灵
   const spriteWrap = document.createElement('div');
   spriteWrap.className = 'unit-sprite-wrap';
-  const sprite = createSpriteElement(speciesId, 48, isEnemy);
+  const sprite = createSpriteElement(speciesId, 40, isEnemy);
   spriteWrap.appendChild(sprite);
   if (!alive) spriteWrap.style.opacity = '0.3';
 

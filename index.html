@@ -48,6 +48,19 @@
         <div class="battle-side" id="ally-side"></div>
       </div>
       <div id="battle-log"></div>
+
+      <div id="reserve-bar">
+        <h3>极品保留栏（离线暂存稀有遭遇，上限10）</h3>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="color:#aaa;font-size:12px;">自动保存阈值:</span>
+          <select id="reserve-threshold" style="background:#16213e;color:#ddd;border:1px solid #333;padding:2px 6px;border-radius:4px;">
+            <option value="1">1星以上</option>
+            <option value="2" selected>2星以上</option>
+            <option value="3">仅3星</option>
+          </select>
+        </div>
+        <div id="reserve-slots"></div>
+      </div>
     </div>
 
     <div id="panel-pets" class="panel">
@@ -83,18 +96,6 @@
       <div id="garden-list"></div>
     </div>
 
-    <div id="reserve-bar">
-      <h3>极品保留栏（离线暂存稀有遭遇，上限10）</h3>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-        <span style="color:#aaa;font-size:12px;">自动保存阈值:</span>
-        <select id="reserve-threshold" style="background:#16213e;color:#ddd;border:1px solid #333;padding:2px 6px;border-radius:4px;">
-          <option value="1">1星以上</option>
-          <option value="2" selected>2星以上</option>
-          <option value="3">仅3星</option>
-        </select>
-      </div>
-      <div id="reserve-slots"></div>
-    </div>
   </div>
 
   <div id="modal-root"></div>
