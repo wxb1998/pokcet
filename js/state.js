@@ -3,7 +3,7 @@ export const gameState = {
   advLv: 1,
   advExp: 0,
   gold: 100,
-  materials: { soul_stone: 3, enhance_stone: 0, rare_enhance: 0 },
+  materials: { soul_stone: 3, enhance_stone: 0, rare_enhance: 0, rope: 5, seal: 0, fairy_lock: 0, talent_fruit: 0 },
   pets: [],
   formation: [null, null, null, null, null, null], // [0-2]=前排, [3-5]=后排, 直接存宠物对象引用
   treasures: [],
@@ -16,7 +16,9 @@ export const gameState = {
   captureMode: false,
   captureTargetIdx: -1,
   totalBattles: 0,
-  appraisalUnlocked: false  // 冒险Lv.15解锁鉴定
+  appraisalUnlocked: false,  // 冒险Lv.15解锁鉴定
+  garden: [],        // 灵兽园中的宠物ID
+  _battleTickFn: null  // 战斗tick函数引用，用于暂停/恢复战斗
 };
 
 // ID计数器用对象包装，避免原始值导出不可变问题

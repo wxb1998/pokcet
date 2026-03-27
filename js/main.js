@@ -3,6 +3,7 @@ import { gameState } from './state.js';
 import { addLog } from './utils.js';
 import { createPet } from './systems/pet.js';
 import { spawnEnemies, battleTick, setBattleRenderer } from './systems/battle.js';
+import { gardenTick } from './systems/garden.js';
 import { saveGame, loadGame } from './save.js';
 import { renderHeader } from './ui/header-ui.js';
 import { renderBattle, renderZoneSelector } from './ui/battle-ui.js';
@@ -10,6 +11,8 @@ import { renderPets } from './ui/pets-ui.js';
 import { renderFormation } from './ui/formation-ui.js';
 import { renderTreasure } from './ui/treasure-ui.js';
 import { renderDex, renderReserve } from './ui/dex-ui.js';
+import { renderShop } from './ui/shop-ui.js';
+import { renderGarden } from './ui/garden-ui.js';
 
 function initGame() {
   const loaded = loadGame();
@@ -31,6 +34,9 @@ function initGame() {
   // 注册渲染回调（打破循环依赖）
   setBattleRenderer(renderBattle);
 
+  // Store battleTick reference for pause/resume
+  gameState._battleTickFn = battleTick;
+
   // 初次渲染
   renderHeader();
   renderZoneSelector();
@@ -39,6 +45,9 @@ function initGame() {
 
   // 启动战斗循环 (1.5秒/回合)
   gameState.battleInterval = setInterval(battleTick, 1500);
+
+  // 灵兽园产出 (30秒)
+  setInterval(gardenTick, 30000);
 
   // 自动存档 (30秒)
   setInterval(saveGame, 30000);
@@ -58,6 +67,8 @@ function initGame() {
         case 'formation': renderFormation(); break;
         case 'treasure': renderTreasure(); break;
         case 'dex': renderDex(); break;
+        case 'shop': renderShop(); break;
+        case 'garden': renderGarden(); break;
       }
     });
   });

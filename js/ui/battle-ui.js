@@ -1,13 +1,41 @@
 // 战斗界面渲染
-import { SPECIES, SKILLS, ELEM_CHART, ZONES } from '../constants/index.js';
+import { SPECIES, SKILLS, ELEM_CHART, ZONES, CAPTURE_ITEMS } from '../constants/index.js';
 import { gameState, getFormationPets } from '../state.js';
-import { calcCaptureRate, attemptCapture } from '../systems/capture.js';
+import { calcCaptureRate, attemptCapture, pauseBattle, resumeBattle } from '../systems/capture.js';
 import { spawnEnemies } from '../systems/battle.js';
 import { renderHeader } from './header-ui.js';
+import { showModal, closeModal } from '../utils.js';
 
-// 把 attemptCapture 暴露到 window 供 onclick 使用
-window._attemptCapture = function(idx) {
-  attemptCapture(idx, () => { renderBattle(); renderHeader(); });
+// Capture item picker
+window._showCapturePicker = function(idx) {
+  pauseBattle();
+  const enemy = gameState.enemies[idx];
+  if (!enemy || enemy.currentHp <= 0) { resumeBattle(); return; }
+
+  let html = '<p>目标: <strong>' + enemy.displayName + '</strong> HP:' + enemy.currentHp + '/' + enemy.maxHp + '</p>';
+
+  const items = ['rope', 'seal', 'soul_stone', 'fairy_lock'];
+  items.forEach(itemId => {
+    const item = CAPTURE_ITEMS[itemId];
+    const matKey = itemId;
+    const stock = gameState.materials[matKey] || 0;
+    const rate = calcCaptureRate(enemy, itemId);
+    const disabled = stock <= 0;
+
+    html += '<div class="capture-item-row' + (disabled ? ' disabled' : '') + '" '
+      + (disabled ? '' : 'onclick="window._confirmCapture(' + idx + ',\'' + itemId + '\')"') + '>'
+      + '<span style="color:' + item.color + ';font-weight:bold;">' + item.name + '</span>'
+      + ' - ' + item.desc
+      + '<span style="float:right;">成功率:' + Math.floor(rate) + '% | 库存:' + stock + '</span>'
+      + '</div>';
+  });
+
+  showModal('选择捕捉道具', html, [{text:'取消', action: () => resumeBattle()}]);
+};
+
+window._confirmCapture = function(enemyIdx, itemId) {
+  closeModal();
+  attemptCapture(enemyIdx, itemId, () => { renderBattle(); renderHeader(); });
 };
 
 export function renderZoneSelector() {
@@ -49,8 +77,7 @@ export function renderBattle() {
       div.className = 'battle-unit ' + e.row;
       let captureHTML = '';
       if (e.capturable && e.currentHp > 0) {
-        const rate = calcCaptureRate(e);
-        captureHTML = '<button class="capture-btn" onclick="window._attemptCapture(' + i + ')">✨捕捉 ' + Math.floor(rate) + '%</button>';
+        captureHTML = '<button class="capture-btn" onclick="window._showCapturePicker(' + i + ')">✨捕捉</button>';
       }
       div.innerHTML = '<div class="unit-name"><span class="pet-elem elem-' + e.elem + '">' + ELEM_CHART[e.elem].name + '</span> ' + e.displayName + '</div>'
         + '<div class="unit-hp-bar"><div class="unit-hp-fill' + (hpPct < 30 ? ' low' : '') + '" style="width:' + hpPct + '%"></div></div>'

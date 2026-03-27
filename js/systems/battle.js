@@ -1,5 +1,5 @@
 // 战斗系统：敌人生成、回合处理、胜负判定
-import { SPECIES, SKILLS, ELEM_CHART, ZONES, PASSIVE_POOL } from '../constants/index.js';
+import { SPECIES, SKILLS, ELEM_CHART, ZONES, PASSIVE_POOL, TALENTS } from '../constants/index.js';
 import { gameState, getFormationPets } from '../state.js';
 import { randInt, pick, weightedPick, showToast, addLog } from '../utils.js';
 import { gainExp } from './pet.js';
@@ -50,6 +50,43 @@ export function spawnEnemies() {
 
     if (!gameState.dex[speciesId]) gameState.dex[speciesId] = { seen: true, caught: false };
     else gameState.dex[speciesId].seen = true;
+
+    // Assign enemy skills based on level
+    const skillPool = sp.skillPool;
+    const enemySkills = [];
+
+    // Basic skill (always)
+    if (skillPool.basic.length > 0) {
+      const basicSkill = pick(skillPool.basic);
+      enemySkills.push({skillId: basicSkill, enhanceLevel: 0, cooldownLeft: 0, priority: 0});
+    }
+
+    // Mid skill (lv >= 10)
+    if (lv >= 10 && skillPool.mid.length > 0) {
+      const midSkill = pick(skillPool.mid);
+      enemySkills.push({skillId: midSkill, enhanceLevel: 0, cooldownLeft: 0, priority: 1});
+    }
+
+    // Second mid skill (lv >= 20)
+    if (lv >= 20 && skillPool.mid.length > 1) {
+      const remaining = skillPool.mid.filter(s => !enemySkills.find(es => es.skillId === s));
+      if (remaining.length > 0) {
+        enemySkills.push({skillId: pick(remaining), enhanceLevel: 0, cooldownLeft: 0, priority: 1});
+      }
+    }
+
+    // High skill (lv >= 30)
+    if (lv >= 30 && skillPool.high.length > 0) {
+      const highSkill = pick(skillPool.high);
+      enemySkills.push({skillId: highSkill, enhanceLevel: 0, cooldownLeft: 0, priority: 2});
+    }
+
+    // Boss gets extra skill and reduced cooldown
+    if (isBoss) {
+      enemySkills.forEach(s => s.cooldownLeft = 0);
+    }
+
+    enemies[enemies.length - 1].skills = enemySkills;
   }
   return enemies;
 }
@@ -103,6 +140,16 @@ export function calcDamage(attacker, defender, skillData) {
 
   let baseDmg = Math.floor((power * atkVal / (defVal + 50)) * elemMult * rowMult * critMult * defBuff * enhanceBonus);
   baseDmg = Math.max(1, baseDmg + randInt(-2, 2));
+
+  // Talent: fierce (猛攻) +8% damage
+  if (!attacker.isEnemy && attacker.talent === 'fierce') {
+    baseDmg = Math.floor(baseDmg * 1.08);
+  }
+
+  // Talent: thickskin (厚皮) reduce crit damage taken
+  if (!defender.isEnemy && defender.talent === 'thickskin' && isCrit) {
+    baseDmg = Math.floor(baseDmg * 0.7); // 30% less crit damage
+  }
 
   return { damage: baseDmg, isCrit, elemMult };
 }
@@ -211,9 +258,27 @@ function unitTakeTurn(unit) {
   if (unit.buffDef > 0) unit.buffDef--;
 
   if (unit.isEnemy) {
+    // Enemy skill usage (same logic as player pets)
+    if (unit.skills && unit.skills.length > 0) {
+      const readySkills = unit.skills.filter(s => s.cooldownLeft <= 0);
+      if (readySkills.length > 0) {
+        readySkills.sort((a, b) => a.priority - b.priority);
+        executeSkill(unit, readySkills[0]);
+        unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
+        return;
+      }
+    }
+    // Fallback to basic attack
     const targets = pickTarget(unit, 'single');
     if (!targets || targets.length === 0) return;
     const target = targets[0];
+
+    // Talent: agile (灵敏) 10% dodge
+    if (!target.isEnemy && target.talent === 'agile' && Math.random() < 0.10) {
+      addLog('【我】' + target.name + ' 灵敏闪避了攻击!', 'log-skill');
+      return;
+    }
+
     const result = calcDamage(unit, target, { power: 50, elem: unit.elem, enhanceLevel: 0 });
     target.currentHp = Math.max(0, target.currentHp - result.damage);
     addLog('【敌】' + (unit.displayName || unit.name) + ' 攻击 ' + target.name + ' 造成 ' + result.damage + ' 伤害', 'log-enemy-dmg');
@@ -221,6 +286,7 @@ function unitTakeTurn(unit) {
       const th = Math.floor(result.damage * 0.1);
       unit.currentHp = Math.max(0, unit.currentHp - th);
     }
+    if (unit.skills) unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
     return;
   }
 

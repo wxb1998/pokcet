@@ -1,7 +1,23 @@
 // 宠物核心系统：创建、属性计算、经验、进化
-import { SPECIES, APT_MULT, APT_WEIGHTS, PERSONALITIES } from '../constants/index.js';
+import { SPECIES, APT_MULT, APT_WEIGHTS, PERSONALITIES, TALENT_KEYS } from '../constants/index.js';
 import { gameState, counters } from '../state.js';
 import { randInt, weightedPick, showToast, addLog } from '../utils.js';
+
+/**
+ * 从IV值推导资质
+ * IV 27-31 = 'S'
+ * IV 20-26 = 'A'
+ * IV 13-19 = 'B'
+ * IV 6-12 = 'C'
+ * IV 0-5 = 'D'
+ */
+export function getAptFromIV(iv) {
+  if (iv >= 27) return 'S';
+  if (iv >= 20) return 'A';
+  if (iv >= 13) return 'B';
+  if (iv >= 6) return 'C';
+  return 'D';
+}
 
 export function randomApt() { return weightedPick(APT_WEIGHTS); }
 
@@ -25,9 +41,18 @@ export function createPet(speciesId, level, forceAllS) {
   if (!sp) return null;
   level = level || 1;
 
-  const apts = forceAllS
-    ? { hp:'S', atk:'S', def:'S', spd:'S' }
-    : { hp: randomApt(), atk: randomApt(), def: randomApt(), spd: randomApt() };
+  // Generate IV first
+  const iv = forceAllS
+    ? { hp: randInt(27,31), atk: randInt(27,31), def: randInt(27,31), spd: randInt(27,31) }
+    : randomIV();
+
+  // Derive apts from IV
+  const apts = {
+    hp: getAptFromIV(iv.hp),
+    atk: getAptFromIV(iv.atk),
+    def: getAptFromIV(iv.def),
+    spd: getAptFromIV(iv.spd)
+  };
 
   const pet = {
     id: counters.petId++,
@@ -38,11 +63,14 @@ export function createPet(speciesId, level, forceAllS) {
     exp: 0,
     apts,
     personality: randomPersonality(),
-    iv: randomIV(),
+    iv,
     evoStage: 0,
     skills: [],
     treasure: null,
     comprehensionCount: 0,
+    talent: TALENT_KEYS[Math.floor(Math.random() * TALENT_KEYS.length)],
+    ev: { hp: 0, atk: 0, def: 0, spd: 0 },
+    battleCount: 0,
     // 战斗临时属性
     currentHp: 0,
     maxHp: 0,
@@ -66,13 +94,14 @@ export function createPet(speciesId, level, forceAllS) {
 
 /**
  * 计算单项属性
- * 公式: floor((基础 + 个体值) × 资质倍率 × 等级成长 × 进化加成 × 性格修正 × 宝物加成)
+ * 公式: floor((基础 + 个体值 + EV/4) × 等级成长 × 进化加成 × 性格修正 × 宝物加成)
+ * 注: IV已包含资质信息，不再需要APT_MULT倍率
  */
 export function calcStat(pet, stat) {
   const sp = SPECIES[pet.speciesId];
   const base = sp.baseStats[stat];
   const iv = pet.iv[stat];
-  const aptMul = APT_MULT[pet.apts[stat]] || 1.0;
+  const ev = pet.ev && pet.ev[stat] ? Math.floor(pet.ev[stat] / 4) : 0;
   const lvGrowth = 1 + (pet.level - 1) * 0.06;
   const evoBonus = 1 + pet.evoStage * 0.3;
 
@@ -91,7 +120,7 @@ export function calcStat(pet, stat) {
     });
   }
 
-  return Math.floor((base + iv) * aptMul * lvGrowth * evoBonus * persMod * treasureBonus);
+  return Math.floor((base + iv + ev) * lvGrowth * evoBonus * persMod * treasureBonus);
 }
 
 export function calcAllStats(pet) {
@@ -150,6 +179,18 @@ export function gainExp(pet, amount) {
       }
     }
   }
+
+  // EV学习点数获取
+  const evStats = ['hp', 'atk', 'def', 'spd'];
+  const totalEV = pet.ev.hp + pet.ev.atk + pet.ev.def + pet.ev.spd;
+  if (totalEV < 510) {
+    const stat = evStats[Math.floor(Math.random() * 4)];
+    if (pet.ev[stat] < 252) {
+      pet.ev[stat] += randInt(1, 3);
+      if (pet.ev[stat] > 252) pet.ev[stat] = 252;
+    }
+  }
+  pet.battleCount = (pet.battleCount || 0) + 1;
 
   return leveledUp;
 }

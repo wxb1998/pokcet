@@ -1,10 +1,11 @@
 // 宠物列表 + 宠物详情
-import { SPECIES, SKILLS, ELEM_CHART, PERSONALITIES, QUALITY_NAMES } from '../constants/index.js';
+import { SPECIES, SKILLS, ELEM_CHART, PERSONALITIES, QUALITY_NAMES, TALENTS } from '../constants/index.js';
 import { gameState } from '../state.js';
 import { showModal, closeModal, showToast } from '../utils.js';
-import { expForLevel, calcAllStats } from '../systems/pet.js';
+import { expForLevel, calcAllStats, getAptFromIV } from '../systems/pet.js';
 import { enhanceSkill } from '../systems/comprehend.js';
 import { equipTreasure } from '../systems/treasure.js';
+import { randInt } from '../utils.js';
 
 // 暴露到 window 供 onclick 调用
 window._enhanceSkill = function(petId, skillIdx) {
@@ -20,6 +21,20 @@ window._equipTreasure = function(trId, petId) {
   equipTreasure(trId, petId);
   closeModal();
   renderPets();
+};
+
+window._useTalentFruit = function(petId, stat) {
+  const pet = gameState.pets.find(p => p.id === petId);
+  if (!pet) return;
+  if ((gameState.materials.talent_fruit || 0) <= 0) { showToast('没有天赋果', 'info'); return; }
+  gameState.materials.talent_fruit--;
+  const oldIV = pet.iv[stat];
+  pet.iv[stat] = randInt(0, 31);
+  pet.apts[stat] = getAptFromIV(pet.iv[stat]);
+  calcAllStats(pet);
+  showToast(stat.toUpperCase() + ' IV: ' + oldIV + ' → ' + pet.iv[stat] + ' (' + pet.apts[stat] + ')', 'info');
+  closeModal();
+  showPetDetail(pet);
 };
 
 export function renderPets() {
@@ -91,6 +106,22 @@ function showPetDetail(pet) {
   let html = '<div style="margin-bottom:12px;">';
   html += '<p><strong>' + sp.evoChain[pet.evoStage] + '</strong> (Lv.' + pet.level + ') - ' + sp.desc + '</p>';
   html += '<p>进化链: ' + sp.evoChain.map((e, i) => (i === pet.evoStage ? '<strong>' + e + '</strong>' : '<span style="color:#666">' + e + '</span>')).join(' → ') + '</p>';
+
+  // Talent display
+  if (pet.level >= 10 && pet.talent) {
+    const talentData = TALENTS[pet.talent];
+    html += '<p style="color:#e94560;"><strong>天赋: ' + talentData.name + '</strong> - ' + talentData.desc + '</p>';
+  } else if (pet.level < 10) {
+    html += '<p style="color:#888;">天赋: ???（Lv.10解锁）</p>';
+  }
+
+  // EV/Learning Power display
+  if (gameState.appraisalUnlocked && (pet.ev.hp || pet.ev.atk || pet.ev.def || pet.ev.spd)) {
+    const totalEV = pet.ev.hp + pet.ev.atk + pet.ev.def + pet.ev.spd;
+    html += '<p style="color:#4caf50;font-size:12px;">学习点数: HP:' + pet.ev.hp + ' ATK:' + pet.ev.atk + ' DEF:' + pet.ev.def + ' SPD:' + pet.ev.spd + ' (合计:' + totalEV + '/510)</p>';
+    html += '<p style="color:#4caf50;font-size:12px;">战斗次数: ' + (pet.battleCount || 0) + '</p>';
+  }
+
   html += '</div>';
 
   // 技能区
@@ -108,6 +139,15 @@ function showPetDetail(pet) {
     }
     html += '</div>';
   });
+
+  // 天赋果重随
+  if (gameState.appraisalUnlocked && gameState.materials.talent_fruit > 0) {
+    html += '<p style="margin-top:12px;"><strong>天赋果重随 (库存:' + gameState.materials.talent_fruit + '):</strong> ';
+    ['hp','atk','def','spd'].forEach(stat => {
+      html += '<button class="btn-sm" onclick="window._useTalentFruit(' + pet.id + ',\'' + stat + '\')">' + stat.toUpperCase() + '</button> ';
+    });
+    html += '</p>';
+  }
 
   // 宝物区
   html += '<h4 style="color:#ffd700;margin-top:12px;">宝物</h4>';

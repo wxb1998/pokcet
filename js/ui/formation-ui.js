@@ -7,9 +7,16 @@ import { renderBattle } from './battle-ui.js';
 export function renderFormation() {
   const el = document.getElementById('formation-grid');
   if (!el) return;
-  el.innerHTML = '<div class="row-label">前排（承受更多伤害）</div>';
+  el.innerHTML = '';
+  const frontLabel = document.createElement('div');
+  frontLabel.className = 'row-label';
+  frontLabel.textContent = '前排（承受更多伤害）';
+  el.appendChild(frontLabel);
   for (let i = 0; i < 3; i++) renderFormSlot(el, i);
-  el.innerHTML += '<div class="row-label">后排（受伤减少30%）</div>';
+  const backLabel = document.createElement('div');
+  backLabel.className = 'row-label';
+  backLabel.textContent = '后排（受伤减少30%）';
+  el.appendChild(backLabel);
   for (let i = 3; i < 6; i++) renderFormSlot(el, i);
 }
 
@@ -115,7 +122,7 @@ function showFormationPicker(slotIdx) {
   const inFormCount = getFormationCount();
 
   if (available.length === 0) { showToast('没有可上阵的宠物', 'info'); return; }
-  if (inFormCount >= 6) { showToast('阵型已满', 'info'); return; }
+  if (inFormCount >= 3) { showToast('最多上阵3只宠物', 'info'); return; }
 
   let html = '<p>选择宠物上阵到' + (slotIdx < 3 ? '前排' : '后排') + ':</p>';
   available.forEach(pet => {

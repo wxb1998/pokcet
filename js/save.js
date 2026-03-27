@@ -30,6 +30,7 @@ export function saveGame() {
       dex: gameState.dex,
       totalBattles: gameState.totalBattles,
       appraisalUnlocked: gameState.appraisalUnlocked,
+      garden: gameState.garden || [],
       petIdCounter: counters.petId,
       treasureIdCounter: counters.treasureId
     };
@@ -48,12 +49,18 @@ export function loadGame() {
     gameState.advLv = data.advLv || 1;
     gameState.advExp = data.advExp || 0;
     gameState.gold = data.gold || 0;
-    gameState.materials = data.materials || { soul_stone: 3, enhance_stone: 0, rare_enhance: 0 };
+    gameState.materials = data.materials || { soul_stone: 3, enhance_stone: 0, rare_enhance: 0, rope: 5, seal: 0, fairy_lock: 0, talent_fruit: 0 };
+    // Migrate old saves that don't have new material fields
+    if (!gameState.materials.rope) gameState.materials.rope = 5;
+    if (!gameState.materials.seal) gameState.materials.seal = 0;
+    if (!gameState.materials.fairy_lock) gameState.materials.fairy_lock = 0;
+    if (!gameState.materials.talent_fruit) gameState.materials.talent_fruit = 0;
     gameState.dex = data.dex || {};
     gameState.totalBattles = data.totalBattles || 0;
     gameState.appraisalUnlocked = data.appraisalUnlocked || false;
     gameState.currentZone = data.currentZone || 0;
     gameState.reserve = data.reserve || [];
+    gameState.garden = data.garden || [];
     counters.petId = data.petIdCounter || 1;
     counters.treasureId = data.treasureIdCounter || 1;
 
@@ -63,6 +70,10 @@ export function loadGame() {
     // 恢复宠物
     gameState.pets = (data.pets || []).map(pd => {
       const pet = { ...pd, treasure: null, currentHp: 0 };
+      // Migrate old pets without new fields
+      if (!pet.ev) pet.ev = { hp: 0, atk: 0, def: 0, spd: 0 };
+      if (!pet.battleCount) pet.battleCount = 0;
+      if (!pet.talent) pet.talent = 'fierce'; // Default talent for old saves
       if (pd.treasureId) {
         const tr = gameState.treasures.find(t => t.id === pd.treasureId);
         if (tr) { pet.treasure = tr; tr.equippedTo = pet.id; }
