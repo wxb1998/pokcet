@@ -1,81 +1,90 @@
-// 技能领悟系统
-import { SPECIES, SKILLS } from '../constants/index.js';
-import { showModal, closeModal, showToast, addLog, pick } from '../utils.js';
+// 技能领悟系统 - 升级时50%概率领悟，方案A（重复=强化，满级浪费）
+import { SPECIES, SKILLS, COMPREHEND_WEIGHTS } from '../constants/index.js';
+import { showToast, addLog, weightedPick } from '../utils.js';
+import { syncBattleSkills } from './pet.js';
 
 /**
- * 战斗胜利后尝试领悟技能
- * 6%概率，上限 = floor(等级/3)
+ * 升级时尝试领悟技能
+ * 触发时机：宠物升级时调用
+ * 概率：50%
+ * 机制（方案A）：
+ *   1. 按权重随机抽一个grade
+ *   2. 从该grade的skillPool里随机抽一个技能
+ *   3. 已学过 → 强化（level+1，上限5，满级则浪费）
+ *   4. 未学过 → 加入skillBook
+ *   5. 不弹窗，直接学会
  */
-export function tryComprehend(pet) {
-  const maxCount = Math.floor(pet.level / 3);
-  if (pet.comprehensionCount >= maxCount) return;
-  if (Math.random() > 0.06) return;
+export function tryComprehendOnLevelUp(pet) {
+  if (Math.random() > 0.50) return;
 
   const sp = SPECIES[pet.speciesId];
-  const availableTiers = ['basic'];
-  if (pet.evoStage >= 1) availableTiers.push('mid');
-  if (pet.evoStage >= 2) availableTiers.push('high');
+  if (!sp || !sp.skillPool) return;
 
-  const candidates = [];
-  availableTiers.forEach(tier => {
-    (sp.skillPool[tier] || []).forEach(skId => {
-      if (!pet.skills.find(s => s.skillId === skId)) {
-        candidates.push(skId);
-      }
-    });
+  // 构建可领悟池（按grade权重）
+  const gradePool = {};
+  const grades = ['common', 'fine', 'rare', 'legend'];
+  grades.forEach(g => {
+    const pool = sp.skillPool[g] || [];
+    if (pool.length > 0) {
+      gradePool[g] = pool;
+    }
   });
 
-  if (candidates.length === 0) return;
+  if (Object.keys(gradePool).length === 0) return;
 
-  const newSkillId = pick(candidates);
-  pet.comprehensionCount++;
-
-  if (pet.skills.length < 4) {
-    pet.skills.push({ skillId: newSkillId, enhanceLevel: 0, cooldownLeft: 0, priority: pet.skills.length });
-    addLog(pet.name + ' 领悟了新技能: ' + SKILLS[newSkillId].name + '!', 'log-comprehend');
-    showToast(pet.name + ' 领悟了 ' + SKILLS[newSkillId].name + '!', 'info');
-  } else {
-    // 技能槽满 - 弹窗选择替换或放弃
-    const skName = SKILLS[newSkillId].name;
-    let html = '<p>' + pet.name + ' 领悟了 <strong>' + skName + '</strong>，但技能槽已满!</p>';
-    html += '<p>选择要替换的技能，或放弃（仍消耗领悟次数）:</p>';
-    pet.skills.forEach((s, idx) => {
-      const sd = SKILLS[s.skillId];
-      html += '<div class="modal-select-item" data-replace-idx="' + idx + '">'
-        + sd.name + ' (Lv.' + (s.enhanceLevel + 1) + ') - ' + sd.desc + '</div>';
-    });
-    html += '<div class="modal-select-item" data-replace-idx="-1" style="color:#888;">放弃领悟</div>';
-
-    showModal('技能领悟', html, []);
-
-    setTimeout(() => {
-      document.querySelectorAll('[data-replace-idx]').forEach(el => {
-        el.onclick = () => {
-          const idx = parseInt(el.getAttribute('data-replace-idx'));
-          if (idx >= 0) {
-            pet.skills[idx] = { skillId: newSkillId, enhanceLevel: 0, cooldownLeft: 0, priority: idx };
-            showToast('替换成功! 学会了 ' + skName, 'info');
-          } else {
-            showToast('放弃了 ' + skName + ' 的领悟', 'info');
-          }
-          closeModal();
-        };
-      });
-    }, 100);
+  // 按权重选grade
+  const weights = {};
+  for (const g in gradePool) {
+    weights[g] = COMPREHEND_WEIGHTS[g] || 1;
   }
+  const chosenGrade = weightedPick(weights);
+  const pool = gradePool[chosenGrade];
+  if (!pool || pool.length === 0) return;
+
+  // 从该grade池里随机抽一个
+  const skillId = pool[Math.floor(Math.random() * pool.length)];
+  const skillData = SKILLS[skillId];
+  if (!skillData) return;
+
+  // 检查是否已学过
+  if (!pet.skillBook) { pet.skillBook = []; pet.equippedSkills = [null,null,null,null]; }
+
+  const existingIdx = pet.skillBook.findIndex(s => s.skillId === skillId);
+
+  if (existingIdx >= 0) {
+    // 已学过 → 强化
+    const entry = pet.skillBook[existingIdx];
+    if (entry.level >= 5) {
+      // 满级，浪费（方案A）
+      addLog(pet.name + ' 领悟了 ' + skillData.name + '，但已满级(Lv.5)，未生效', 'log-comprehend');
+      return;
+    }
+    entry.level++;
+    addLog(pet.name + ' 的 ' + skillData.name + ' 强化至 Lv.' + entry.level + '!', 'log-comprehend');
+    showToast(skillData.name + ' → Lv.' + entry.level + '!', 'info');
+  } else {
+    // 新技能 → 加入skillBook
+    pet.skillBook.push({ skillId, level: 1 });
+    const newIdx = pet.skillBook.length - 1;
+
+    // 如果有空装备槽，自动装备
+    const emptySlot = pet.equippedSkills.indexOf(null);
+    if (emptySlot >= 0) {
+      pet.equippedSkills[emptySlot] = newIdx;
+    }
+
+    const gradeName = { common:'普通', fine:'精良', rare:'稀有', legend:'传说' }[chosenGrade] || '';
+    addLog(pet.name + ' 领悟了[' + gradeName + ']技能: ' + skillData.name + '!', 'log-comprehend');
+    showToast(pet.name + ' 领悟了 ' + skillData.name + '!', 'info');
+  }
+
+  // 同步战斗技能
+  syncBattleSkills(pet);
 }
 
 /**
- * 强化技能（消耗领悟次数，最高+3/III）
+ * 旧版兼容：战斗后领悟（保留但不再使用，由 tryComprehendOnLevelUp 替代）
  */
-export function enhanceSkill(pet, skillIdx) {
-  const maxCount = Math.floor(pet.level / 3);
-  if (pet.comprehensionCount >= maxCount) { showToast('领悟次数已用完', 'info'); return false; }
-  const skill = pet.skills[skillIdx];
-  if (!skill) return false;
-  if (skill.enhanceLevel >= 3) { showToast('已达最大强化等级', 'info'); return false; }
-  pet.comprehensionCount++;
-  skill.enhanceLevel++;
-  showToast(SKILLS[skill.skillId].name + ' 强化至 Lv.' + (skill.enhanceLevel + 1) + '!', 'info');
-  return true;
+export function tryComprehend(pet) {
+  // 不再触发，保留空函数避免其他文件import报错
 }

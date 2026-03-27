@@ -1,5 +1,5 @@
 // 战斗界面渲染 - 上下对阵 + 阵型(前排/后排) + HP/ATK条 + 攻击动画
-import { SPECIES, SKILLS, ELEM_CHART, ZONES, CAPTURE_ITEMS } from '../constants/index.js';
+import { SPECIES, SKILLS, ELEM_CHART, ZONES, CAPTURE_ITEMS, STATUS_EFFECTS } from '../constants/index.js';
 import { gameState, getFormationPets } from '../state.js';
 import { calcCaptureRate, attemptCapture, pauseBattle, resumeBattle } from '../systems/capture.js';
 import { spawnEnemies } from '../systems/battle.js';
@@ -354,6 +354,22 @@ function createUnitCard(unit, idx, isEnemy) {
       skillRow.appendChild(tag);
     });
     info.appendChild(skillRow);
+  }
+
+  // 状态效果图标行
+  if (unit.statusEffects && unit.statusEffects.length > 0) {
+    const statusRow = document.createElement('div');
+    statusRow.className = 'unit-status-row';
+    unit.statusEffects.forEach(se => {
+      const meta = STATUS_EFFECTS[se.type];
+      if (!meta) return;
+      const icon = document.createElement('span');
+      icon.className = 'status-icon' + (meta.isDebuff ? ' debuff' : ' buff');
+      icon.textContent = meta.icon + (se.stacks > 1 ? se.stacks : '');
+      icon.title = meta.name + ' (' + se.turnsLeft + '回合)';
+      statusRow.appendChild(icon);
+    });
+    info.appendChild(statusRow);
   }
 
   // 复活计时器

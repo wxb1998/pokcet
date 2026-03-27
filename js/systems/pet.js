@@ -3,6 +3,7 @@ import { SPECIES, APT_MULT, APT_WEIGHTS, PERSONALITIES, TALENT_KEYS } from '../c
 import { gameState, counters } from '../state.js';
 import { randInt, weightedPick, showToast, addLog } from '../utils.js';
 import { calcRuneEffects } from './rune.js';
+import { tryComprehendOnLevelUp } from './comprehend.js';
 
 /**
  * 从IV值推导资质
@@ -72,7 +73,11 @@ export function createPet(speciesId, level, forceAllS, customIVs) {
     personality: randomPersonality(),
     iv,
     evoStage: 0,
-    skills: [],
+    // === 新技能系统 ===
+    skillBook: [],          // 技能书：所有已领悟技能 [{skillId, level}]，无上限
+    equippedSkills: [null, null, null, null], // 装备槽：4个，存skillBook索引，顺序=优先级
+    skills: [],             // 战斗用：由 syncBattleSkills() 从上面两个字段计算
+    // === 旧字段保留兼容 ===
     treasure: null,
     comprehensionCount: 0,
     talent: TALENT_KEYS[Math.floor(Math.random() * TALENT_KEYS.length)],
@@ -82,13 +87,16 @@ export function createPet(speciesId, level, forceAllS, customIVs) {
     currentHp: 0,
     maxHp: 0,
     buffDef: 0,
-    regen: 0
+    regen: 0,
+    statusEffects: []       // 状态效果列表 [{type, turnsLeft, stacks, value}]
   };
 
   // 给一个初始技能
-  if (sp.skillPool.basic.length > 0) {
-    pet.skills.push({ skillId: sp.skillPool.basic[0], enhanceLevel: 0, cooldownLeft: 0, priority: 0 });
+  if (sp.skillPool.common && sp.skillPool.common.length > 0) {
+    pet.skillBook.push({ skillId: sp.skillPool.common[0], level: 1 });
+    pet.equippedSkills[0] = 0; // 装备到第一槽位
   }
+  syncBattleSkills(pet);
 
   calcAllStats(pet);
   pet.currentHp = pet.maxHp;
@@ -182,6 +190,9 @@ export function gainExp(pet, amount) {
     pet.level++;
     leveledUp = true;
 
+    // 升级时尝试领悟技能（50%概率）
+    tryComprehendOnLevelUp(pet);
+
     // 进化检查
     if (pet.evoStage === 0 && pet.level >= 15) {
       pet.evoStage = 1;
@@ -225,4 +236,52 @@ export function gainExp(pet, amount) {
   pet.battleCount = (pet.battleCount || 0) + 1;
 
   return leveledUp;
+}
+
+/**
+ * 从 skillBook + equippedSkills 生成战斗用 skills 数组
+ * 战斗系统直接读 pet.skills，格式与旧版兼容
+ */
+export function syncBattleSkills(pet) {
+  if (!pet.skillBook) { pet.skillBook = []; pet.equippedSkills = [null,null,null,null]; }
+  pet.skills = [];
+  for (let i = 0; i < 4; i++) {
+    const bookIdx = pet.equippedSkills[i];
+    if (bookIdx == null || !pet.skillBook[bookIdx]) continue;
+    const entry = pet.skillBook[bookIdx];
+    pet.skills.push({
+      skillId: entry.skillId,
+      enhanceLevel: entry.level - 1,  // skillBook.level从1开始，enhanceLevel从0开始
+      cooldownLeft: 0,
+      priority: i                      // 优先级=槽位顺序，0最高
+    });
+  }
+}
+
+/**
+ * 迁移旧存档宠物数据到新技能系统
+ * 旧格式: pet.skills = [{skillId, enhanceLevel, cooldownLeft, priority}]
+ * 新格式: pet.skillBook + pet.equippedSkills
+ */
+export function migratePetSkills(pet) {
+  // 已经有skillBook的不用迁移
+  if (pet.skillBook && pet.skillBook.length > 0) return;
+
+  pet.skillBook = [];
+  pet.equippedSkills = [null, null, null, null];
+  pet.statusEffects = pet.statusEffects || [];
+
+  if (pet.skills && pet.skills.length > 0) {
+    // 按旧priority排序
+    const sorted = [...pet.skills].sort((a, b) => (a.priority || 0) - (b.priority || 0));
+    sorted.forEach((s, i) => {
+      pet.skillBook.push({
+        skillId: s.skillId,
+        level: (s.enhanceLevel || 0) + 1  // enhanceLevel 0 → level 1
+      });
+      if (i < 4) pet.equippedSkills[i] = i;
+    });
+  }
+
+  syncBattleSkills(pet);
 }

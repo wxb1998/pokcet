@@ -298,6 +298,12 @@ body { font-family: 'Microsoft YaHei','PingFang SC',sans-serif; background:#1a1a
 .skill-dot.on-cd { background:rgba(255,255,255,0.04); color:#666; border-color:rgba(255,255,255,0.1); }
 .skill-dot:hover { background:rgba(233,69,96,0.35); transform:scale(1.15); }
 
+/* 状态效果图标 */
+.unit-status-row { display:flex; gap:2px; justify-content:center; flex-wrap:wrap; margin-top:1px; }
+.status-icon { font-size:10px; line-height:1; cursor:default; }
+.status-icon.debuff { filter:drop-shadow(0 0 2px rgba(255,0,0,0.4)); }
+.status-icon.buff { filter:drop-shadow(0 0 2px rgba(0,200,0,0.4)); }
+
 /* 攻击动画：向上冲（己方攻击敌方）*/
 .atk-anim-up { animation:atkUp 0.3s ease-out; }
 @keyframes atkUp {

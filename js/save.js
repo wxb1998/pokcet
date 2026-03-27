@@ -1,6 +1,6 @@
 // 存档 / 读档系统
 import { gameState, counters } from './state.js';
-import { calcAllStats } from './systems/pet.js';
+import { calcAllStats, migratePetSkills, syncBattleSkills } from './systems/pet.js';
 import { setRuneIdCounter, getRuneIdCounter } from './systems/rune.js';
 
 const SAVE_KEY = 'shanhaijing_save_v3';
@@ -104,6 +104,10 @@ export function loadGame() {
         if (tr) { pet.treasure = tr; tr.equippedTo = pet.id; }
       }
       calcAllStats(pet);
+      // 迁移旧技能数据到新skillBook系统
+      migratePetSkills(pet);
+      syncBattleSkills(pet);
+      if (!pet.statusEffects) pet.statusEffects = [];
       pet.currentHp = pd.hpRatio ? Math.max(1, Math.floor(pet.maxHp * pd.hpRatio)) : pet.maxHp;
       return pet;
     });

@@ -1,5 +1,5 @@
 // 战斗系统：敌人生成、回合处理、胜负判定
-import { SPECIES, SKILLS, ELEM_CHART, ZONES, PASSIVE_POOL, TALENTS } from '../constants/index.js';
+import { SPECIES, SKILLS, ELEM_CHART, ZONES, PASSIVE_POOL, TALENTS, STATUS_EFFECTS, scalingRatio } from '../constants/index.js';
 import { gameState, getFormationPets } from '../state.js';
 import { randInt, pick, weightedPick, showToast, addLog } from '../utils.js';
 import { gainExp } from './pet.js';
@@ -70,40 +70,41 @@ export function spawnEnemies() {
       isEnemy: true,
       skills: [],
       buffDef: 0,
-      regen: 0
+      regen: 0,
+      statusEffects: []
     });
 
     if (!gameState.dex[speciesId]) gameState.dex[speciesId] = { seen: true, caught: false };
     else gameState.dex[speciesId].seen = true;
 
-    // Assign enemy skills based on level
+    // Assign enemy skills based on level (新4级系统)
     const skillPool = sp.skillPool;
     const enemySkills = [];
 
-    // Basic skill (always)
-    if (skillPool.basic.length > 0) {
-      const basicSkill = pick(skillPool.basic);
-      enemySkills.push({skillId: basicSkill, enhanceLevel: 0, cooldownLeft: 0, priority: 0});
+    // Common skill (always)
+    if (skillPool.common && skillPool.common.length > 0) {
+      const s = pick(skillPool.common);
+      enemySkills.push({skillId: s, enhanceLevel: 0, cooldownLeft: 0, priority: 0});
     }
 
-    // Mid skill (lv >= 10)
-    if (lv >= 10 && skillPool.mid.length > 0) {
-      const midSkill = pick(skillPool.mid);
-      enemySkills.push({skillId: midSkill, enhanceLevel: 0, cooldownLeft: 0, priority: 1});
+    // Fine skill (lv >= 10)
+    if (lv >= 10 && skillPool.fine && skillPool.fine.length > 0) {
+      const s = pick(skillPool.fine);
+      enemySkills.push({skillId: s, enhanceLevel: 0, cooldownLeft: 0, priority: 1});
     }
 
-    // Second mid skill (lv >= 20)
-    if (lv >= 20 && skillPool.mid.length > 1) {
-      const remaining = skillPool.mid.filter(s => !enemySkills.find(es => es.skillId === s));
+    // Second fine skill (lv >= 20)
+    if (lv >= 20 && skillPool.fine && skillPool.fine.length > 1) {
+      const remaining = skillPool.fine.filter(s => !enemySkills.find(es => es.skillId === s));
       if (remaining.length > 0) {
         enemySkills.push({skillId: pick(remaining), enhanceLevel: 0, cooldownLeft: 0, priority: 1});
       }
     }
 
-    // High skill (lv >= 30)
-    if (lv >= 30 && skillPool.high.length > 0) {
-      const highSkill = pick(skillPool.high);
-      enemySkills.push({skillId: highSkill, enhanceLevel: 0, cooldownLeft: 0, priority: 2});
+    // Rare skill (lv >= 30)
+    if (lv >= 30 && skillPool.rare && skillPool.rare.length > 0) {
+      const s = pick(skillPool.rare);
+      enemySkills.push({skillId: s, enhanceLevel: 0, cooldownLeft: 0, priority: 2});
     }
 
     // 3星怪（Boss级）技能冷却归零
@@ -127,6 +128,180 @@ export function spawnEnemies() {
     }
   }
   return enemies;
+}
+
+// ===== 状态效果系统 =====
+
+/** 尝试给目标施加状态效果 */
+function tryApplyStatus(caster, target, effect) {
+  if (!effect || !effect.type) return;
+  if (!target.statusEffects) target.statusEffects = [];
+  const sType = effect.type;
+
+  // 跳过非debuff类（buff类直接在别处处理）
+  const meta = STATUS_EFFECTS[sType];
+  if (!meta) return;
+
+  // 概率判定 + 属性缩放
+  let chance = effect.baseChance || 0;
+  if (effect.scaling === 'spd:spd') {
+    chance *= scalingRatio(caster.spd, target.spd);
+  } else if (effect.scaling === 'atk:def') {
+    chance *= scalingRatio(caster.atk, target.def);
+  } else if (effect.scaling === 'atk:atk') {
+    chance *= scalingRatio(caster.atk, target.atk);
+  }
+  chance = Math.min(0.90, chance); // 上限90%
+
+  if (Math.random() > chance) return;
+
+  // 检查是否可叠加
+  const existing = target.statusEffects.find(s => s.type === sType);
+  if (existing) {
+    if (meta.stackable && effect.stacks) {
+      existing.stacks = Math.min((existing.stacks || 1) + (effect.stacks || 1), meta.maxStacks || 3);
+      existing.turnsLeft = Math.max(existing.turnsLeft, effect.duration || 2);
+    } else {
+      // 不可叠加：刷新持续时间
+      existing.turnsLeft = Math.max(existing.turnsLeft, effect.duration || 2);
+      if (effect.value) existing.value = Math.max(existing.value || 0, effect.value);
+    }
+  } else {
+    target.statusEffects.push({
+      type: sType,
+      turnsLeft: effect.duration || 2,
+      stacks: effect.stacks || 1,
+      value: effect.value || 0
+    });
+  }
+  const statusName = meta.name || sType;
+  addLog((target.displayName || target.name) + ' 陷入了' + statusName + '状态!', 'log-skill');
+}
+
+/** 给自己/队友施加buff */
+function applyBuff(caster, target, effect) {
+  if (!target.statusEffects) target.statusEffects = [];
+  const sType = effect.type;
+  if (sType === 'heal' || sType === 'purify' || sType === 'cleanse' || sType === 'teamHeal' || sType === 'cleanse_and_shield') return; // 这些单独处理
+
+  let value = effect.value || 0;
+  // 缩放
+  if (effect.scaling === 'atk') {
+    value *= (1 + caster.atk / 500);
+  }
+  const existing = target.statusEffects.find(s => s.type === sType);
+  if (existing) {
+    existing.turnsLeft = Math.max(existing.turnsLeft, effect.duration || 2);
+    existing.value = Math.max(existing.value || 0, value);
+  } else {
+    target.statusEffects.push({ type: sType, turnsLeft: effect.duration || 2, value });
+  }
+}
+
+/** 计算治疗量 */
+function calcHealAmount(caster, effect) {
+  const base = effect.baseHeal || 0;
+  const atkBonus = (effect.atkRatio || 0) * (caster.atk || 50);
+  const hpBonus = (effect.hpRatio || 0) * (caster.maxHp || 500);
+  return Math.floor(base + atkBonus + hpBonus);
+}
+
+/** 计算护盾量 */
+function calcShieldAmount(caster, effect) {
+  const defBonus = (effect.defRatio || 0) * (caster.def || 50);
+  const hpBonus = (effect.hpRatio || 0) * (caster.maxHp || 500);
+  return Math.floor(defBonus + hpBonus);
+}
+
+/** 处理单位回合开始的状态效果 */
+function processStatusEffects(unit) {
+  if (!unit.statusEffects) { unit.statusEffects = []; return { skip: false, silenced: false }; }
+  let skip = false;
+  let silenced = false;
+
+  for (const se of unit.statusEffects) {
+    switch (se.type) {
+      case 'poison': {
+        // 每回合伤害：3% × stacks × (atk/def缩放已在施加时决定)
+        const dmg = Math.floor(unit.maxHp * 0.03 * (se.stacks || 1));
+        unit.currentHp = Math.max(1, unit.currentHp - dmg);
+        addLog((unit.displayName || unit.name) + ' 受到中毒伤害 ' + dmg, 'log-enemy-dmg');
+        break;
+      }
+      case 'burn': {
+        const dmg = Math.floor(unit.maxHp * 0.04);
+        unit.currentHp = Math.max(1, unit.currentHp - dmg);
+        addLog((unit.displayName || unit.name) + ' 受到灼烧伤害 ' + dmg, 'log-enemy-dmg');
+        break;
+      }
+      case 'freeze':
+        addLog((unit.displayName || unit.name) + ' 被冰冻，无法行动!', 'log-skill');
+        skip = true;
+        break;
+      case 'paralyze':
+        if (Math.random() < 0.25) {
+          addLog((unit.displayName || unit.name) + ' 麻痹发作，无法行动!', 'log-skill');
+          skip = true;
+        }
+        break;
+      case 'confuse':
+        // 混乱在攻击时处理（可能打队友），这里只标记
+        break;
+      case 'silence':
+        silenced = true;
+        break;
+      case 'regen': {
+        const h = Math.floor(unit.maxHp * 0.06);
+        unit.currentHp = Math.min(unit.maxHp, unit.currentHp + h);
+        addLog((unit.displayName || unit.name) + ' 持续回复 ' + h + ' HP', 'log-heal');
+        break;
+      }
+    }
+  }
+
+  // 减少持续时间，移除到期的
+  unit.statusEffects = unit.statusEffects.filter(se => {
+    se.turnsLeft--;
+    return se.turnsLeft > 0;
+  });
+
+  return { skip, silenced };
+}
+
+/** 获取单位有效攻击力（含buff/debuff） */
+function getEffectiveAtk(unit) {
+  let atk = unit.atk || 50;
+  if (!unit.statusEffects) return atk;
+  unit.statusEffects.forEach(se => {
+    if (se.type === 'atkUp') atk = Math.floor(atk * (1 + (se.value || 0.15)));
+    if (se.type === 'atkDown') atk = Math.floor(atk * (1 - (se.value || 0.15)));
+  });
+  return atk;
+}
+
+/** 获取单位有效防御力 */
+function getEffectiveDef(unit) {
+  let def = unit.def || 30;
+  if (!unit.statusEffects) return def;
+  unit.statusEffects.forEach(se => {
+    if (se.type === 'defUp') def = Math.floor(def * (1 + (se.value || 0.25)));
+    if (se.type === 'defDown') def = Math.floor(def * (1 - (se.value || 0.25)));
+  });
+  return def;
+}
+
+/** 检查嘲讽目标 */
+function getTauntTarget(isEnemyAttacker) {
+  if (isEnemyAttacker) {
+    // 敌方攻击时，检查己方是否有嘲讽单位
+    for (let i = 0; i < 6; i++) {
+      const p = gameState.formation[i];
+      if (p && p.currentHp > 0 && p.statusEffects) {
+        if (p.statusEffects.find(s => s.type === 'taunt')) return p;
+      }
+    }
+  }
+  return null;
 }
 
 // ===== 元素克制 =====
@@ -155,9 +330,9 @@ function allFrontDead(isEnemy) {
 
 export function calcDamage(attacker, defender, skillData) {
   const power = skillData ? skillData.power : 50;
-  const enhanceBonus = 1 + (skillData.enhanceLevel || 0) * 0.08;
-  const atkVal = attacker.atk || 50;
-  const defVal = defender.def || 30;
+  const enhanceBonus = 1 + (skillData.enhanceLevel || 0) * 0.12;  // 每级+12%
+  const atkVal = getEffectiveAtk(attacker);
+  const defVal = getEffectiveDef(defender);
   const elemMult = getElemMultiplier(
     skillData ? skillData.elem : (attacker.elem || 'normal'),
     defender.elem || 'normal'
@@ -180,9 +355,14 @@ export function calcDamage(attacker, defender, skillData) {
   }
   const isCrit = Math.random() < critRate;
   const critMult = isCrit ? critDmg : 1.0;
-  const defBuff = (defender.buffDef > 0) ? 0.7 : 1.0;
+  // 护盾吸收
+  let shieldAbsorb = 0;
+  if (defender.statusEffects) {
+    const shield = defender.statusEffects.find(s => s.type === 'shield');
+    if (shield) shieldAbsorb = shield.value || 0;
+  }
 
-  let baseDmg = Math.floor((power * atkVal / (defVal + 50)) * elemMult * rowMult * critMult * defBuff * enhanceBonus);
+  let baseDmg = Math.floor((power * atkVal / (defVal + 50)) * elemMult * rowMult * critMult * enhanceBonus);
   baseDmg = Math.max(1, baseDmg + randInt(-2, 2));
 
   // Talent: fierce (猛攻) +8% damage
@@ -233,26 +413,91 @@ function executeSkill(unit, skillSlot) {
   const skillData = SKILLS[skillSlot.skillId];
   if (!skillData) return;
 
-  // 自身增益/回复
   const sidePrefix = unit.isEnemy ? '【敌】' : '【我】';
+  const eff = skillData.statusEffect;
+
+  // === 自身增益/回复 ===
   if (skillData.type === 'self') {
-    if (skillData.effect === 'defUp') { unit.buffDef = 3; addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，防御提升!', 'log-skill'); }
-    else if (skillData.effect === 'defUp2') { unit.buffDef = 4; addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，防御大幅提升!', 'log-skill'); }
-    else if (skillData.effect === 'heal25') { const h = Math.floor(unit.maxHp * 0.25); unit.currentHp = Math.min(unit.maxHp, unit.currentHp + h); addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，回复 ' + h + ' HP!', 'log-heal'); }
-    else if (skillData.effect === 'heal40') { const h = Math.floor(unit.maxHp * 0.4); unit.currentHp = Math.min(unit.maxHp, unit.currentHp + h); addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，回复 ' + h + ' HP!', 'log-heal'); }
-    else if (skillData.effect === 'regen') { unit.regen = 4; addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，持续回复中!', 'log-heal'); }
+    if (eff) {
+      if (eff.type === 'heal') {
+        const h = calcHealAmount(unit, eff);
+        unit.currentHp = Math.min(unit.maxHp, unit.currentHp + h);
+        addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，回复 ' + h + ' HP!', 'log-heal');
+      } else if (eff.type === 'shield') {
+        const shieldAmt = calcShieldAmount(unit, eff);
+        if (!unit.statusEffects) unit.statusEffects = [];
+        const existing = unit.statusEffects.find(s => s.type === 'shield');
+        if (existing) { existing.value = shieldAmt; existing.turnsLeft = 3; }
+        else unit.statusEffects.push({ type:'shield', turnsLeft:3, value:shieldAmt });
+        addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，生成 ' + shieldAmt + ' 点护盾!', 'log-skill');
+      } else if (eff.type === 'regen') {
+        if (!unit.statusEffects) unit.statusEffects = [];
+        unit.statusEffects.push({ type:'regen', turnsLeft: eff.duration || 3, value:0 });
+        addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，持续回复中!', 'log-heal');
+      } else {
+        // 通用buff（defUp, atkUp, speedUp, taunt等）
+        applyBuff(unit, unit, eff);
+        addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '!', 'log-skill');
+      }
+    }
     skillSlot.cooldownLeft = skillData.cooldown;
     return;
   }
 
-  // 全体队友回复
-  if (skillData.type === 'ally_all') {
-    if (skillData.effect === 'healAll30') {
-      getFormationPets().forEach(a => {
-        const h = Math.floor(a.pet.maxHp * 0.3);
-        a.pet.currentHp = Math.min(a.pet.maxHp, a.pet.currentHp + h);
+  // === ally_single: 单体队友技能 ===
+  if (skillData.type === 'ally_single') {
+    if (eff) {
+      // 找血量最低的队友
+      let target = null, minRatio = 2;
+      const allies = unit.isEnemy ? gameState.enemies : gameState.formation.filter(Boolean);
+      allies.forEach(a => {
+        if (a && a.currentHp > 0) {
+          const ratio = a.currentHp / a.maxHp;
+          if (ratio < minRatio) { minRatio = ratio; target = a; }
+        }
       });
-      addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，全队回复HP!', 'log-heal');
+      if (!target) target = unit;
+
+      if (eff.type === 'heal' || eff.type === 'purify') {
+        const h = calcHealAmount(unit, eff);
+        target.currentHp = Math.min(target.maxHp, target.currentHp + h);
+        addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，回复 ' + (target.displayName||target.name) + ' ' + h + ' HP!', 'log-heal');
+        // 净化：驱散负面
+        if (eff.type === 'purify' && eff.cleanse && target.statusEffects) {
+          const debuffs = target.statusEffects.filter(s => { const m = STATUS_EFFECTS[s.type]; return m && m.isDebuff; });
+          for (let i = 0; i < (eff.cleanse || 1) && debuffs.length > 0; i++) {
+            const idx = target.statusEffects.indexOf(debuffs.shift());
+            if (idx >= 0) target.statusEffects.splice(idx, 1);
+          }
+          addLog(sidePrefix + '驱散了 ' + (target.displayName||target.name) + ' 的负面状态!', 'log-skill');
+        }
+      }
+    }
+    skillSlot.cooldownLeft = skillData.cooldown;
+    return;
+  }
+
+  // === ally_all: 全体队友技能 ===
+  if (skillData.type === 'ally_all') {
+    if (eff) {
+      const allies = unit.isEnemy
+        ? gameState.enemies.filter(e => e.currentHp > 0)
+        : getFormationPets().map(fp => fp.pet);
+
+      if (eff.type === 'heal') {
+        const h = calcHealAmount(unit, eff);
+        allies.forEach(a => { a.currentHp = Math.min(a.maxHp, a.currentHp + h); });
+        addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，全队回复 ' + h + ' HP!', 'log-heal');
+      } else if (eff.type === 'cleanse' && eff.cleanseAll) {
+        allies.forEach(a => {
+          if (a.statusEffects) a.statusEffects = a.statusEffects.filter(s => { const m = STATUS_EFFECTS[s.type]; return !(m && m.isDebuff); });
+        });
+        addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '，驱散全队负面状态!', 'log-skill');
+      } else {
+        // 通用buff（encourage等）
+        allies.forEach(a => applyBuff(unit, a, eff));
+        addLog(sidePrefix + unit.name + ' 使用 ' + skillData.name + '!', 'log-skill');
+      }
     }
     skillSlot.cooldownLeft = skillData.cooldown;
     return;
@@ -264,16 +509,40 @@ function executeSkill(unit, skillSlot) {
 
   targets.forEach(target => {
     const result = calcDamage(unit, target, { ...skillData, enhanceLevel: skillSlot.enhanceLevel || 0 });
-    target.currentHp = Math.max(0, target.currentHp - result.damage);
     const critText = result.isCrit ? ' 暴击!' : '';
     const elemText = result.elemMult > 1 ? ' 效果拔群!' : (result.elemMult < 1 ? ' 效果不佳...' : '');
     const logCls = unit.isEnemy ? 'log-enemy-dmg' : 'log-ally-dmg';
     const prefix = unit.isEnemy ? '【敌】' : '【我】';
+    // 护盾吸收
+    let actualDmg = result.damage;
+    if (target.statusEffects) {
+      const shield = target.statusEffects.find(s => s.type === 'shield');
+      if (shield && shield.value > 0) {
+        const absorbed = Math.min(shield.value, actualDmg);
+        shield.value -= absorbed;
+        actualDmg -= absorbed;
+        if (shield.value <= 0) {
+          target.statusEffects = target.statusEffects.filter(s => s.type !== 'shield');
+        }
+      }
+    }
+    target.currentHp = Math.max(0, target.currentHp - actualDmg);
+
     addLog(prefix + unit.name + ' 使用 ' + skillData.name + ' 对 ' + (target.displayName || target.name) + ' 造成 ' + result.damage + ' 伤害' + critText + elemText, logCls);
     // 记录攻击动作（供UI动画）
     const atkId = unit.isEnemy ? 'e' + gameState.enemies.indexOf(unit) : 'a' + gameState.formation.indexOf(unit);
     const tgtId = target.isEnemy ? 'e' + gameState.enemies.indexOf(target) : 'a' + gameState.formation.indexOf(target);
     if (gameState._battleActions) gameState._battleActions.push({ attackerId: atkId, targetId: tgtId });
+
+    // 施加状态效果（如果技能有）
+    if (eff) tryApplyStatus(unit, target, eff);
+
+    // 附带治疗（万木春等攻击+治疗混合技能）
+    if (skillData.statusEffect && skillData.statusEffect.type === 'teamHeal') {
+      const allies = unit.isEnemy ? gameState.enemies.filter(e => e.currentHp > 0) : getFormationPets().map(fp => fp.pet);
+      const h = calcHealAmount(unit, skillData.statusEffect);
+      allies.forEach(a => { a.currentHp = Math.min(a.maxHp, a.currentHp + h); });
+    }
 
     // 宝物被动: 吸血
     if (!unit.isEnemy && unit.treasure && unit.treasure.passive === 'lifesteal') {
@@ -303,72 +572,88 @@ function executeSkill(unit, skillSlot) {
 // ===== 单位回合 =====
 
 function unitTakeTurn(unit) {
-  if (unit.regen > 0) {
-    const h = Math.floor(unit.maxHp * 0.08);
-    unit.currentHp = Math.min(unit.maxHp, unit.currentHp + h);
-    unit.regen--;
-  }
-  if (unit.buffDef > 0) unit.buffDef--;
-
-  if (unit.isEnemy) {
-    // Enemy skill usage (same logic as player pets)
-    if (unit.skills && unit.skills.length > 0) {
-      const readySkills = unit.skills.filter(s => s.cooldownLeft <= 0);
-      if (readySkills.length > 0) {
-        readySkills.sort((a, b) => a.priority - b.priority);
-        executeSkill(unit, readySkills[0]);
-        unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
-        return;
-      }
-    }
-    // Fallback to basic attack
-    const targets = pickTarget(unit, 'single');
-    if (!targets || targets.length === 0) return;
-    const target = targets[0];
-
-    // Talent: agile (灵敏) 10% dodge
-    if (!target.isEnemy && target.talent === 'agile' && Math.random() < 0.10) {
-      addLog('【我】' + target.name + ' 灵敏闪避了攻击!', 'log-skill');
-      return;
-    }
-
-    const result = calcDamage(unit, target, { power: 50, elem: unit.elem, enhanceLevel: 0 });
-    target.currentHp = Math.max(0, target.currentHp - result.damage);
-    addLog('【敌】' + (unit.displayName || unit.name) + ' 攻击 ' + target.name + ' 造成 ' + result.damage + ' 伤害', 'log-enemy-dmg');
-    // 记录攻击动作
-    if (gameState._battleActions) {
-      const atkId = 'e' + gameState.enemies.indexOf(unit);
-      const tgtId = 'a' + gameState.formation.indexOf(target);
-      gameState._battleActions.push({ attackerId: atkId, targetId: tgtId });
-    }
-    if (target.treasure && target.treasure.passive === 'thorns') {
-      const th = Math.floor(result.damage * 0.1);
-      unit.currentHp = Math.max(0, unit.currentHp - th);
-    }
+  // 1. 处理状态效果（毒/灼烧伤害、冰冻/麻痹跳过判定）
+  const { skip, silenced } = processStatusEffects(unit);
+  if (skip) {
+    // 被控制跳过行动，但技能CD仍然减少
     if (unit.skills) unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
     return;
   }
 
-  // 宠物回合 - 按优先级选技能
-  const readySkills = unit.skills.filter(s => s.cooldownLeft <= 0);
-  if (readySkills.length > 0) {
-    readySkills.sort((a, b) => a.priority - b.priority);
-    executeSkill(unit, readySkills[0]);
-  } else {
-    const targets = pickTarget(unit, 'single');
-    if (!targets || targets.length === 0) return;
-    const target = targets[0];
-    const result = calcDamage(unit, target, { power: 45, elem: unit.elem, enhanceLevel: 0 });
-    target.currentHp = Math.max(0, target.currentHp - result.damage);
-    addLog('【我】' + unit.name + ' 普通攻击 ' + (target.displayName || target.name) + ' 造成 ' + result.damage + ' 伤害', 'log-ally-dmg');
-    // 记录攻击动作
-    if (gameState._battleActions) {
-      const atkId = 'a' + gameState.formation.indexOf(unit);
-      const tgtId = 'e' + gameState.enemies.indexOf(target);
-      gameState._battleActions.push({ attackerId: atkId, targetId: tgtId });
+  // 兼容旧regen/buffDef
+  if (unit.regen > 0) { unit.regen--; }
+  if (unit.buffDef > 0) unit.buffDef--;
+
+  const sidePrefix = unit.isEnemy ? '【敌】' : '【我】';
+
+  // 2. 选技能释放（被沉默只能普攻）
+  if (!silenced && unit.skills && unit.skills.length > 0) {
+    // 按priority排序（0最高=最先释放），选第一个CD就绪的
+    const sorted = [...unit.skills].sort((a, b) => (a.priority || 0) - (b.priority || 0));
+    const readySkill = sorted.find(s => s.cooldownLeft <= 0);
+    if (readySkill) {
+      // 混乱检查：30%概率攻击队友（仅伤害技能）
+      const isConfused = unit.statusEffects && unit.statusEffects.find(s => s.type === 'confuse');
+      if (isConfused && Math.random() < 0.30) {
+        const sd = SKILLS[readySkill.skillId];
+        if (sd && (sd.type === 'single' || sd.type === 'aoe')) {
+          addLog(sidePrefix + (unit.displayName || unit.name) + ' 陷入混乱，攻击了队友!', 'log-skill');
+          // 攻击随机队友
+          const allies = unit.isEnemy
+            ? gameState.enemies.filter(e => e.currentHp > 0 && e !== unit)
+            : gameState.formation.filter(p => p && p.currentHp > 0 && p !== unit);
+          if (allies.length > 0) {
+            const friendlyTarget = pick(allies);
+            const result = calcDamage(unit, friendlyTarget, { power: 45, elem: 'normal', enhanceLevel: 0 });
+            friendlyTarget.currentHp = Math.max(0, friendlyTarget.currentHp - result.damage);
+          }
+          unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
+          return;
+        }
+      }
+
+      executeSkill(unit, readySkill);
+      unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
+      return;
     }
   }
-  unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
+
+  // 3. 普攻（无就绪技能或被沉默）
+  let targets = pickTarget(unit, 'single');
+  if (!targets || targets.length === 0) return;
+
+  // 嘲讽检查
+  const tauntTarget = getTauntTarget(unit.isEnemy);
+  let target = tauntTarget || targets[0];
+
+  // Talent: agile (灵敏) 闪避
+  const evasionBuff = target.statusEffects ? target.statusEffects.find(s => s.type === 'evasion') : null;
+  const evasionChance = (target.talent === 'agile' ? 0.10 : 0) + (evasionBuff ? (evasionBuff.value || 0) : 0);
+  if (evasionChance > 0 && Math.random() < evasionChance) {
+    addLog(sidePrefix.replace('敌', '我').replace('我', '敌') + (target.displayName || target.name) + ' 闪避了攻击!', 'log-skill');
+    if (unit.skills) unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
+    return;
+  }
+
+  const power = unit.isEnemy ? 50 : 45;
+  const result = calcDamage(unit, target, { power, elem: unit.elem, enhanceLevel: 0 });
+  target.currentHp = Math.max(0, target.currentHp - result.damage);
+  addLog(sidePrefix + (unit.displayName || unit.name) + ' 普通攻击 ' + (target.displayName || target.name) + ' 造成 ' + result.damage + ' 伤害', unit.isEnemy ? 'log-enemy-dmg' : 'log-ally-dmg');
+
+  // 记录攻击动作
+  if (gameState._battleActions) {
+    const atkId = unit.isEnemy ? 'e' + gameState.enemies.indexOf(unit) : 'a' + gameState.formation.indexOf(unit);
+    const tgtId = target.isEnemy ? 'e' + gameState.enemies.indexOf(target) : 'a' + gameState.formation.indexOf(target);
+    gameState._battleActions.push({ attackerId: atkId, targetId: tgtId });
+  }
+
+  // 宝物被动
+  if (target.treasure && target.treasure.passive === 'thorns') {
+    const th = Math.floor(result.damage * 0.1);
+    unit.currentHp = Math.max(0, unit.currentHp - th);
+  }
+
+  if (unit.skills) unit.skills.forEach(s => { if (s.cooldownLeft > 0) s.cooldownLeft--; });
 }
 
 // ===== 战斗回合 =====
@@ -492,7 +777,8 @@ function handleDefeat() {
       p.currentHp = p.maxHp;
       p.buffDef = 0;
       p.regen = 0;
-      p.skills.forEach(s => s.cooldownLeft = 0);
+      p.statusEffects = [];
+      if (p.skills) p.skills.forEach(s => s.cooldownLeft = 0);
     });
     gameState.enemies = spawnEnemies();
     addLog('宠物已恢复，继续战斗!', 'log-heal');
