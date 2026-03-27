@@ -216,3 +216,31 @@ body { font-family: 'Microsoft YaHei','PingFang SC',sans-serif; background:#1a1a
 
 /* ===== Speed Slider ===== */
 #speed-slider { height: 4px; }
+
+/* ===== 符文系统 ===== */
+.rune-card { background:rgba(255,255,255,0.04); border-radius:8px; padding:10px 12px; margin-bottom:8px; transition:background 0.2s; }
+.rune-card:hover { background:rgba(255,255,255,0.08); }
+.rune-header { font-size:13px; margin-bottom:4px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.rune-level { background:#e94560; color:#fff; font-size:10px; padding:1px 6px; border-radius:8px; }
+.rune-main { font-size:15px; font-weight:bold; color:#ffca28; margin:4px 0; }
+.rune-subs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
+.rune-sub { background:rgba(255,255,255,0.06); padding:2px 8px; border-radius:4px; font-size:11px; color:#aaa; }
+.rune-actions { display:flex; gap:6px; flex-wrap:wrap; }
+
+/* ===== 副本系统 ===== */
+.dungeon-stamina { text-align:center; padding:8px; margin-bottom:12px; background:rgba(255,255,255,0.04); border-radius:8px; font-size:14px; }
+.dungeon-floor { background:rgba(255,255,255,0.04); border-radius:8px; padding:12px; margin-bottom:8px; border-left:3px solid #555; transition:background 0.2s; }
+.dungeon-floor:hover { background:rgba(255,255,255,0.08); }
+.dungeon-floor.cleared { border-left-color:#4caf50; }
+.dungeon-floor.no-stamina { opacity:0.5; }
+.floor-header { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+.floor-name { font-size:14px; font-weight:bold; color:#e94560; }
+.floor-level { font-size:12px; color:#888; }
+.floor-cleared { font-size:12px; }
+.floor-desc { font-size:12px; color:#888; margin-bottom:6px; }
+.floor-info { display:flex; gap:16px; font-size:11px; color:#aaa; margin-bottom:8px; }
+.floor-actions { }
+.dungeon-btn { background:#e94560; color:#fff; border:none; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:12px; }
+.dungeon-btn:hover { background:#ff6b6b; }
+.dungeon-btn:disabled { background:#444; cursor:not-allowed; color:#666; }
+.dungeon-log p { margin:2px 0; }

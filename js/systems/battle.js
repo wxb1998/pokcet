@@ -166,11 +166,17 @@ export function calcDamage(attacker, defender, skillData) {
 
   let critRate = 0.05;
   let critDmg = 1.5;
+  // 旧宝物系统暴击加成（兼容）
   if (!attacker.isEnemy && attacker.treasure) {
     attacker.treasure.affixes.forEach(af => {
       if (af.id === 'crit_rate') critRate += af.value / 100;
       if (af.id === 'crit_dmg') critDmg += af.value / 100;
     });
+  }
+  // 符文暴击加成
+  if (!attacker.isEnemy && attacker._runeEffects) {
+    critRate += (attacker._runeEffects.pctStats.crit_rate || 0) / 100;
+    critDmg += (attacker._runeEffects.pctStats.crit_dmg || 0) / 100;
   }
   const isCrit = Math.random() < critRate;
   const critMult = isCrit ? critDmg : 1.0;
@@ -268,6 +274,11 @@ function executeSkill(unit, skillSlot) {
     // 宝物被动: 吸血
     if (!unit.isEnemy && unit.treasure && unit.treasure.passive === 'lifesteal') {
       const ls = Math.floor(result.damage * 0.05);
+      unit.currentHp = Math.min(unit.maxHp, unit.currentHp + ls);
+    }
+    // 符文套装: 吸血
+    if (!unit.isEnemy && unit._runeEffects && unit._runeEffects.pctStats.lifesteal > 0) {
+      const ls = Math.floor(result.damage * unit._runeEffects.pctStats.lifesteal / 100);
       unit.currentHp = Math.min(unit.maxHp, unit.currentHp + ls);
     }
     // 宝物被动: 反伤

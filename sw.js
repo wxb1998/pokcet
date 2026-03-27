@@ -1,5 +1,5 @@
 // Service Worker - 离线缓存支持
-const CACHE_NAME = 'shanhaijing-v6';
+const CACHE_NAME = 'shanhaijing-v7';
 
 const ASSETS = [
   './',
@@ -17,12 +17,16 @@ const ASSETS = [
   './js/constants/treasure-data.js',
   './js/constants/talents.js',
   './js/constants/capture-items.js',
+  './js/constants/rune-data.js',
+  './js/constants/dungeon-data.js',
   './js/systems/pet.js',
   './js/systems/battle.js',
   './js/systems/capture.js',
   './js/systems/comprehend.js',
   './js/systems/treasure.js',
   './js/systems/garden.js',
+  './js/systems/rune.js',
+  './js/systems/dungeon.js',
   './js/ui/header-ui.js',
   './js/ui/battle-ui.js',
   './js/ui/pets-ui.js',
@@ -30,7 +34,9 @@ const ASSETS = [
   './js/ui/treasure-ui.js',
   './js/ui/dex-ui.js',
   './js/ui/shop-ui.js',
-  './js/ui/garden-ui.js'
+  './js/ui/garden-ui.js',
+  './js/ui/rune-ui.js',
+  './js/ui/dungeon-ui.js'
 ];
 
 // 安装时缓存所有资源

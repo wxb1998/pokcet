@@ -4,6 +4,7 @@ import { addLog } from './utils.js';
 import { createPet } from './systems/pet.js';
 import { spawnEnemies, battleTick, setBattleRenderer } from './systems/battle.js';
 import { gardenTick } from './systems/garden.js';
+import { initStamina, regenStamina } from './systems/dungeon.js';
 import { saveGame, loadGame } from './save.js';
 import { renderHeader } from './ui/header-ui.js';
 import { renderBattle, renderZoneSelector } from './ui/battle-ui.js';
@@ -13,6 +14,8 @@ import { renderTreasure } from './ui/treasure-ui.js';
 import { renderDex, renderReserve } from './ui/dex-ui.js';
 import { renderShop } from './ui/shop-ui.js';
 import { renderGarden } from './ui/garden-ui.js';
+import { renderRunes } from './ui/rune-ui.js';
+import { renderDungeon } from './ui/dungeon-ui.js';
 
 function initGame() {
   const loaded = loadGame();
@@ -27,6 +30,9 @@ function initGame() {
   } else {
     addLog('存档已加载，继续冒险!', 'log-loot');
   }
+
+  // 初始化体力
+  initStamina();
 
   // 生成初始敌人
   gameState.enemies = spawnEnemies();
@@ -51,6 +57,9 @@ function initGame() {
   // 灵兽园产出 (30秒)
   setInterval(gardenTick, 30000);
 
+  // 体力回复检查 (60秒)
+  setInterval(regenStamina, 60000);
+
   // 自动存档 (30秒)
   setInterval(saveGame, 30000);
 
@@ -63,7 +72,6 @@ function initGame() {
       const speed = parseFloat(speedSlider.value);
       gameState.battleSpeed = speed;
       speedDisplay.textContent = '×' + speed;
-      // 重启战斗循环
       if (gameState.battleInterval) clearInterval(gameState.battleInterval);
       const interval = Math.max(75, Math.floor(1500 / speed));
       gameState.battleInterval = setInterval(battleTick, interval);
@@ -92,6 +100,8 @@ function initGame() {
         case 'battle': renderBattle(); renderZoneSelector(); break;
         case 'pets': renderPets(); break;
         case 'formation': renderFormation(); break;
+        case 'rune': renderRunes(); break;
+        case 'dungeon': renderDungeon(); break;
         case 'treasure': renderTreasure(); break;
         case 'dex': renderDex(); renderReserve(); break;
         case 'shop': renderShop(); break;
@@ -100,7 +110,7 @@ function initGame() {
     });
   });
 
-  console.log('[山海经·挂机物语] 游戏初始化完成, 模块化版本 v2.0');
+  console.log('[山海经·挂机物语] 游戏初始化完成, v3.0 符文系统');
 }
 
 // 启动

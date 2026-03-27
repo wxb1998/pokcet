@@ -21,7 +21,14 @@ export const gameState = {
   _battleTickFn: null,  // 战斗tick函数引用，用于暂停/恢复战斗
   battleSpeed: 1,    // 战斗速度倍数 (1-20)
   reserveThreshold: 2,  // 自动保存阈值 (1星以上/2星以上/仅3星)
-  reviveTimers: {}   // 复活计时器 {petId: timestamp}
+  reviveTimers: {},  // 复活计时器 {petId: timestamp}
+  // 符文系统
+  runes: [],         // 符文背包 [{id, slotType, setId, quality, level, ...}]
+  // 体力系统
+  stamina: 120,
+  lastStaminaTime: Date.now(),
+  // 副本进度
+  dungeonProgress: {} // {floorId: true}
 };
 
 // ID计数器用对象包装，避免原始值导出不可变问题

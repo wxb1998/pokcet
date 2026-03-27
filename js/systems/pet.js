@@ -2,6 +2,7 @@
 import { SPECIES, APT_MULT, APT_WEIGHTS, PERSONALITIES, TALENT_KEYS } from '../constants/index.js';
 import { gameState, counters } from '../state.js';
 import { randInt, weightedPick, showToast, addLog } from '../utils.js';
+import { calcRuneEffects } from './rune.js';
 
 /**
  * 从IV值推导资质
@@ -101,7 +102,7 @@ export function createPet(speciesId, level, forceAllS, customIVs) {
 /**
  * 计算单项属性
  * 公式: floor((基础 + 个体值 + EV/4) × 等级成长 × 进化加成 × 性格修正 × 宝物加成)
- * 注: IV已包含资质信息，不再需要APT_MULT倍率
+ * 符文加成在 calcAllStats 中统一处理
  */
 export function calcStat(pet, stat) {
   const sp = SPECIES[pet.speciesId];
@@ -118,6 +119,7 @@ export function calcStat(pet, stat) {
     if (persData.down === stat) persMod = 0.9;
   }
 
+  // 旧宝物系统加成（兼容）
   let treasureBonus = 1.0;
   if (pet.treasure) {
     pet.treasure.affixes.forEach(af => {
@@ -132,10 +134,34 @@ export function calcStat(pet, stat) {
 export function calcAllStats(pet) {
   const prevMaxHp = pet.maxHp || 1;
   const hpRatio = pet.currentHp / prevMaxHp;
-  pet.maxHp = calcStat(pet, 'hp') * 5;
-  pet.atk = calcStat(pet, 'atk');
-  pet.def = calcStat(pet, 'def');
-  pet.spd = calcStat(pet, 'spd');
+
+  // 基础属性计算
+  let hp = calcStat(pet, 'hp') * 5;
+  let atk = calcStat(pet, 'atk');
+  let def = calcStat(pet, 'def');
+  let spd = calcStat(pet, 'spd');
+
+  // 符文加成
+  const runeEffects = calcRuneEffects(pet);
+  // 固定值加成
+  hp  += runeEffects.flatStats.hp;
+  atk += runeEffects.flatStats.atk;
+  def += runeEffects.flatStats.def;
+  spd += runeEffects.flatStats.spd;
+  // 百分比加成
+  hp  = Math.floor(hp  * (1 + (runeEffects.pctStats.hp_pct || 0) / 100));
+  atk = Math.floor(atk * (1 + (runeEffects.pctStats.atk_pct || 0) / 100));
+  def = Math.floor(def * (1 + (runeEffects.pctStats.def_pct || 0) / 100));
+  spd = Math.floor(spd * (1 + (runeEffects.pctStats.spd_pct || 0) / 100));
+
+  pet.maxHp = hp;
+  pet.atk = atk;
+  pet.def = def;
+  pet.spd = spd;
+
+  // 缓存符文效果供战斗使用
+  pet._runeEffects = runeEffects;
+
   pet.currentHp = Math.max(1, Math.floor(pet.maxHp * hpRatio));
 }
 
